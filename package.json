@@ -1,0 +1,25 @@
+{
+  "name": "auctioncraze-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm run dev --workspace=@auctioncraze/api",
+    "dev:web": "npm run dev --workspace=@auctioncraze/web",
+    "build": "npm run build --workspace=@auctioncraze/shared && npm run build --workspace=@auctioncraze/database && npm run build --workspace=@auctioncraze/auction-engine && npm run build --workspace=@auctioncraze/api && npm run build --workspace=@auctioncraze/web",
+    "db:generate": "npm run generate --workspace=@auctioncraze/database",
+    "db:push": "npm run push --workspace=@auctioncraze/database",
+    "db:seed": "npm run seed --workspace=@auctioncraze/database",
+    "db:studio": "npm run studio --workspace=@auctioncraze/database",
+    "test:api": "npm test --workspace=@auctioncraze/api",
+    "test:engine": "npm test --workspace=@auctioncraze/auction-engine"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}

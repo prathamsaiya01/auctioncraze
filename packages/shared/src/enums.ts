@@ -1,0 +1,63 @@
+export enum RoomRole {
+  HOST = 'HOST',
+  OWNER = 'OWNER',
+  SPECTATOR = 'SPECTATOR'
+}
+
+export enum RoomVisibility {
+  PUBLIC = 'PUBLIC',
+  PRIVATE = 'PRIVATE'
+}
+
+export enum RoomStatus {
+  LOBBY = 'LOBBY',
+  LIVE = 'LIVE',
+  PAUSED = 'PAUSED',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED'
+}
+
+export enum AuctionMode {
+  MOCK = 'MOCK',
+  MEGA = 'MEGA',
+  CUSTOM = 'CUSTOM'
+}
+
+export enum LotStatus {
+  QUEUED = 'QUEUED',
+  ACTIVE = 'ACTIVE',
+  BIDDING_CLOSED = 'BIDDING_CLOSED',
+  SOLD = 'SOLD',
+  UNSOLD = 'UNSOLD',
+  SKIPPED = 'SKIPPED'
+}
+
+export enum CricketRole {
+  BATSMAN = 'BATSMAN',
+  BOWLER = 'BOWLER',
+  ALL_ROUNDER = 'ALL_ROUNDER',
+  WICKET_KEEPER = 'WICKET_KEEPER'
+}
+
+export enum BattingStyle {
+  RIGHT_HAND = 'RIGHT_HAND',
+  LEFT_HAND = 'LEFT_HAND'
+}
+
+export enum BowlingStyle {
+  RIGHT_ARM_FAST = 'RIGHT_ARM_FAST',
+  RIGHT_ARM_MEDIUM = 'RIGHT_ARM_MEDIUM',
+  RIGHT_ARM_SPIN = 'RIGHT_ARM_SPIN',
+  LEFT_ARM_FAST = 'LEFT_ARM_FAST',
+  LEFT_ARM_MEDIUM = 'LEFT_ARM_MEDIUM',
+  LEFT_ARM_SPIN = 'LEFT_ARM_SPIN',
+  NONE = 'NONE'
+}
+
+export enum LedgerEntryType {
+  INITIAL = 'INITIAL',
+  DEDUCTION = 'DEDUCTION',
+  RETENTION_DEDUCTION = 'RETENTION_DEDUCTION',
+  PURSE_ADJUSTMENT = 'PURSE_ADJUSTMENT',
+  REFUND_REVERSAL = 'REFUND_REVERSAL'
+}

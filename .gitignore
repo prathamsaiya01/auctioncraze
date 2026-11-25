@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build artifacts
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Logs & OS
+logs/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Uploads / ML Artifacts
+uploads/
+services/ml/artifacts/*.pkl
+services/ml/artifacts/*.joblib
+services/ml/artifacts/*.json
+!services/ml/artifacts/.gitkeep

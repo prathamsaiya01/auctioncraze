@@ -1,0 +1,397 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RoomVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum RoomStatus {
+  LOBBY
+  LIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum AuctionMode {
+  MOCK
+  MEGA
+  CUSTOM
+}
+
+enum RoomRole {
+  HOST
+  OWNER
+  SPECTATOR
+}
+
+enum LotStatus {
+  QUEUED
+  ACTIVE
+  BIDDING_CLOSED
+  SOLD
+  UNSOLD
+  SKIPPED
+}
+
+enum CricketRole {
+  BATSMAN
+  BOWLER
+  ALL_ROUNDER
+  WICKET_KEEPER
+}
+
+enum BattingStyle {
+  RIGHT_HAND
+  LEFT_HAND
+}
+
+enum BowlingStyle {
+  RIGHT_ARM_FAST
+  RIGHT_ARM_MEDIUM
+  RIGHT_ARM_SPIN
+  LEFT_ARM_FAST
+  LEFT_ARM_MEDIUM
+  LEFT_ARM_SPIN
+  NONE
+}
+
+enum LedgerEntryType {
+  INITIAL
+  DEDUCTION
+  RETENTION_DEDUCTION
+  PURSE_ADJUSTMENT
+  REFUND_REVERSAL
+}
+
+// -------------------------------------------------------------
+// GUEST SESSIONS & OPTIONAL ACCOUNTS (NO SUPER ADMIN)
+// -------------------------------------------------------------
+
+model GuestSession {
+  id          String   @id @default(uuid())
+  tokenSecret String
+  displayName String
+  avatarSeed  String
+  expiresAt   DateTime
+  lastSeenAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  participants RoomParticipant[]
+  chatMessages ChatMessage[]
+
+  @@index([expiresAt])
+}
+
+// -------------------------------------------------------------
+// MULTIPLAYER ROOMS & FRANCHISES
+// -------------------------------------------------------------
+
+model Room {
+  id                        String         @id @default(uuid())
+  code                      String         @unique
+  name                      String
+  visibility                RoomVisibility @default(PUBLIC)
+  inviteToken               String?
+  status                    RoomStatus     @default(LOBBY)
+  auctionMode               AuctionMode    @default(MEGA)
+  hostParticipantId         String?
+  version                   Int            @default(1)
+  initialPurseLakhs         Int            @default(10000)
+  minSquadSize              Int            @default(15)
+  maxSquadSize              Int            @default(25)
+  maxOverseas               Int            @default(8)
+  maxSpectators             Int            @default(20)
+  minOwnersRequired         Int            @default(2)
+  defaultBasePriceLakhs     Int            @default(50)
+  bidIncrementTiersJson     Json?
+  countdownSeconds          Int            @default(20)
+  allowLateBidExtension     Boolean        @default(true)
+  bidExtensionSeconds       Int            @default(10)
+  extensionThresholdSeconds Int            @default(5)
+  allowHostSkip             Boolean        @default(true)
+  allowTeamPurseAdjustments Boolean        @default(false)
+  retentionEnabled          Boolean        @default(false)
+  maxRetentionsPerFranchise Int            @default(4)
+  maxOverseasRetentions     Int            @default(2)
+  configFinalized           Boolean        @default(false)
+  configFinalizedAt         DateTime?
+  isPaused                  Boolean        @default(false)
+  currentLotId              String?
+  startedAt                 DateTime?
+  endedAt                   DateTime?
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+
+  franchises   RoomFranchise[]
+  participants RoomParticipant[]
+  lots         RoomPlayerLot[]
+  retentions   RoomRetention[]
+  events       AuctionEvent[]
+  chatMessages ChatMessage[]
+
+  @@index([visibility, status])
+  @@index([code])
+}
+
+model RoomFranchise {
+  id                   String   @id @default(uuid())
+  roomId               String
+  presetCode           String
+  name                 String
+  abbreviation         String
+  primaryColor         String
+  secondaryColor       String
+  initialPurseLakhs    Int
+  purseAdjustmentLakhs Int      @default(0)
+  remainingPurseLakhs  Int
+  squadCount           Int      @default(0)
+  overseasCount        Int      @default(0)
+  retainedCount        Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  room        Room             @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  owner       RoomParticipant?
+  retentions  RoomRetention[]
+  bids        Bid[]
+  purchases   Purchase[]
+  purseLedger PurseLedger[]
+
+  @@unique([roomId, presetCode])
+  @@index([roomId])
+}
+
+model RoomRetention {
+  id                 String   @id @default(uuid())
+  roomId             String
+  franchiseId        String
+  playerId           String
+  retentionCostLakhs Int
+  slotNumber         Int
+  createdAt          DateTime @default(now())
+
+  room      Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  franchise RoomFranchise @relation(fields: [franchiseId], references: [id], onDelete: Cascade)
+  player    MasterPlayer  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, playerId])
+  @@index([roomId, franchiseId])
+}
+
+model RoomParticipant {
+  id              String    @id @default(uuid())
+  roomId          String
+  guestSessionId  String
+  displayName     String
+  role            RoomRole  @default(OWNER)
+  franchiseId     String?   @unique // Enforces 1 user per franchise in DB!
+  isReady         Boolean   @default(false)
+  isConnected     Boolean   @default(true)
+  isRemoved       Boolean   @default(false)
+  lastHeartbeatAt DateTime  @default(now())
+  joinedAt        DateTime  @default(now())
+  leftAt          DateTime?
+
+  room         Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  guestSession GuestSession   @relation(fields: [guestSessionId], references: [id], onDelete: Cascade)
+  franchise    RoomFranchise? @relation(fields: [franchiseId], references: [id], onDelete: SetNull)
+  bids         Bid[]
+
+  @@unique([roomId, guestSessionId])
+  @@index([roomId, role])
+}
+
+// -------------------------------------------------------------
+// CENTRALIZED PLAYER DATABASE (SEPARATE FROM ROOM LOT STATE)
+// -------------------------------------------------------------
+
+model MasterPlayer {
+  id              String        @id @default(uuid())
+  externalKey     String?       @unique
+  fullName        String
+  nationality     String        @default("India")
+  isOverseas      Boolean       @default(false)
+  dateOfBirth     DateTime?
+  age             Int?
+  playingRole     CricketRole   @default(ALL_ROUNDER)
+  battingStyle    BattingStyle  @default(RIGHT_HAND)
+  bowlingStyle    BowlingStyle  @default(NONE)
+  basePriceLakhs  Int           @default(50)
+  imageUrl        String?
+  teamHistoryJson Json?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  seasonStats PlayerSeasonStat[]
+  lots        RoomPlayerLot[]
+  retentions  RoomRetention[]
+
+  @@index([fullName])
+  @@index([playingRole, isOverseas])
+}
+
+model PlayerSeasonStat {
+  id             String   @id @default(uuid())
+  playerId       String
+  season         Int
+  teamCode       String?
+  matches        Int      @default(0)
+  innings        Int      @default(0)
+  runs           Int      @default(0)
+  highestScore   Int      @default(0)
+  battingAverage Decimal  @default(0.00) @db.Decimal(6, 2)
+  strikeRate     Decimal  @default(0.00) @db.Decimal(6, 2)
+  fifties        Int      @default(0)
+  hundreds       Int      @default(0)
+  wickets        Int      @default(0)
+  bowlingAverage Decimal  @default(0.00) @db.Decimal(6, 2)
+  economy        Decimal  @default(0.00) @db.Decimal(6, 2)
+  bestBowling    String?
+  catches        Int      @default(0)
+  stumpings      Int      @default(0)
+
+  player MasterPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, season])
+  @@index([season])
+}
+
+// -------------------------------------------------------------
+// ROOM-SCOPED AUCTION LOTS, BIDS & LEDGER
+// -------------------------------------------------------------
+
+model RoomPlayerLot {
+  id                 String    @id @default(uuid())
+  roomId             String
+  playerId           String
+  sequenceOrder      Int
+  setCategory        String    @default("Marquee")
+  basePriceLakhs     Int
+  currentBidLakhs    Int       @default(0)
+  winningFranchiseId String?
+  status             LotStatus @default(QUEUED)
+  biddingClosedAt    DateTime?
+  startedAt          DateTime?
+  settledAt          DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  room     Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  player   MasterPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  bids     Bid[]
+  purchase Purchase?
+
+  @@unique([roomId, playerId])
+  @@index([roomId, sequenceOrder])
+  @@index([roomId, status])
+}
+
+model Bid {
+  id             String   @id @default(uuid())
+  lotId          String
+  franchiseId    String
+  participantId  String
+  bidAmountLakhs Int
+  sequenceNumber Int
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+
+  lot         RoomPlayerLot   @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  franchise   RoomFranchise   @relation(fields: [franchiseId], references: [id], onDelete: Cascade)
+  participant RoomParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([lotId, sequenceNumber])
+  @@index([franchiseId])
+}
+
+model Purchase {
+  id                 String   @id @default(uuid())
+  lotId              String   @unique
+  roomId             String
+  franchiseId        String
+  playerId           String
+  purchasePriceLakhs Int
+  soldAt             DateTime @default(now())
+
+  lot         RoomPlayerLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  franchise   RoomFranchise @relation(fields: [franchiseId], references: [id], onDelete: Cascade)
+  purseLedger PurseLedger?
+
+  @@index([roomId, franchiseId])
+}
+
+model PurseLedger {
+  id                String          @id @default(uuid())
+  franchiseId       String
+  purchaseId        String?         @unique
+  entryType         LedgerEntryType
+  amountLakhs       Int
+  balanceAfterLakhs Int
+  description       String
+  createdAt         DateTime        @default(now())
+
+  franchise RoomFranchise @relation(fields: [franchiseId], references: [id], onDelete: Cascade)
+  purchase  Purchase?     @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+
+  @@index([franchiseId])
+}
+
+model AuctionEvent {
+  id             String   @id @default(uuid())
+  roomId         String
+  sequenceNumber Int
+  roomVersion    Int
+  eventType      String
+  payload        Json
+  createdAt      DateTime @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, sequenceNumber])
+}
+
+model ChatMessage {
+  id             String   @id @default(uuid())
+  roomId         String
+  guestSessionId String
+  senderName     String
+  franchiseCode  String?
+  message        String
+  createdAt      DateTime @default(now())
+
+  room         Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  guestSession GuestSession @relation(fields: [guestSessionId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+}
+
+// -------------------------------------------------------------
+// ML SERVICE REGISTRY & AUDIT BOUNDARY (NO BIDDING ADVICE)
+// -------------------------------------------------------------
+
+model MLModelRegistry {
+  id               String   @id @default(uuid())
+  modelKey         String   // PLAYER_RATING, PERFORMANCE_PRED, TEAM_STRENGTH, PLAYING_XI, MATCH_PRED
+  version          String
+  algorithm        String
+  trainSplitStart  String
+  trainSplitEnd    String
+  testSplitStart   String
+  testSplitEnd     String
+  metricsJson      Json?
+  artifactPath     String?
+  isActive         Boolean  @default(false)
+  trainedAt        DateTime @default(now())
+
+  @@unique([modelKey, version])
+}
