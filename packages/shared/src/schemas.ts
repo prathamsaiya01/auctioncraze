@@ -227,3 +227,17 @@ export const roomCodeParamSchema = z.object({
     .toUpperCase()
     .regex(/^[A-Z0-9-]{4,12}$/, 'Invalid room code format')
 });
+
+export const placeBidSchema = z.object({
+  lotId: z.string().uuid('Invalid lot ID'),
+  bidAmountLakhs: z.number().int().positive('Bid amount must be positive'),
+  idempotencyKey: z.string().trim().min(6).max(128)
+});
+
+export const resolveLotSchema = z.object({
+  lotId: z.string().uuid('Invalid lot ID')
+});
+
+export const extendTimerSchema = z.object({
+  extraSeconds: z.number().int().min(3).max(60).default(10)
+});

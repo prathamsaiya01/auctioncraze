@@ -2,13 +2,15 @@ import { Server as HttpServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import Redis from 'ioredis';
-import { prisma } from '@auctioncraze/database';
-import { SOCKET_EVENTS, SOCKET_ROOMS } from '@auctioncraze/shared';
+import { prisma, RoomStatus as DbRoomStatus } from '@auctioncraze/database';
+import { placeBidSchema, SOCKET_EVENTS, SOCKET_ROOMS } from '@auctioncraze/shared';
 import { config } from '../config/env';
 import { verifyGuestToken } from '../middleware/auth';
 import { redis } from '../lib/redis';
 import { mapRoomToDetailDto } from '../modules/rooms/roomMapper';
 import { ROOM_RELATIONS_INCLUDE } from '../modules/rooms/roomHelpers';
+import { AUCTION_ROOM_INCLUDE, mapAuctionStateSnapshot } from '../modules/auction/auctionMapper';
+import { AuctionService } from '../modules/auction/auctionService';
 
 export interface AuthenticatedSocket extends Socket {
   guestSession?: {
@@ -175,6 +177,16 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
           });
           socket.emit(SOCKET_EVENTS.ROOM_STATE, personalSnapshot);
 
+          if (fullRoom.status !== DbRoomStatus.LOBBY) {
+            const auctionRoom = await prisma.room.findUnique({
+              where: { id: room.id },
+              include: AUCTION_ROOM_INCLUDE
+            });
+            if (auctionRoom) {
+              socket.emit(SOCKET_EVENTS.AUCTION_STATE, mapAuctionStateSnapshot(auctionRoom));
+            }
+          }
+
           if (wasDisconnected) {
             const roomWideSnapshot = mapRoomToDetailDto(fullRoom, false);
             socket.to(SOCKET_ROOMS.room(room.code)).emit(SOCKET_EVENTS.ROOM_STATE, roomWideSnapshot);
@@ -188,6 +200,40 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
         });
       }
     });
+
+    socket.on(
+      SOCKET_EVENTS.BID_SUBMIT,
+      async (payload: {
+        roomCode?: string;
+        lotId?: string;
+        bidAmountLakhs?: number;
+        idempotencyKey?: string;
+      }) => {
+        try {
+          const roomCode = payload?.roomCode?.trim().toUpperCase();
+          if (!roomCode || !socket.joinedRooms?.has(roomCode)) {
+            socket.emit(SOCKET_EVENTS.BID_REJECTED, {
+              code: 'NOT_A_MEMBER',
+              message: 'Join the room before placing bids.'
+            });
+            return;
+          }
+
+          const parsed = placeBidSchema.parse({
+            lotId: payload.lotId,
+            bidAmountLakhs: payload.bidAmountLakhs,
+            idempotencyKey: payload.idempotencyKey
+          });
+
+          await AuctionService.placeBid(roomCode, socket.guestSession!.id, parsed);
+        } catch (err: any) {
+          socket.emit(SOCKET_EVENTS.BID_REJECTED, {
+            code: err?.code || 'BID_REJECTED',
+            message: err?.message || 'Bid rejected by server.'
+          });
+        }
+      }
+    );
 
     socket.on(SOCKET_EVENTS.ROOM_LEAVE, async (payload: { roomCode?: string }) => {
       const roomCode = payload?.roomCode?.trim().toUpperCase();

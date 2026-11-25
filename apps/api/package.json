@@ -6,7 +6,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx src/__tests__/phase1.test.ts && tsx src/__tests__/phase2.test.ts && tsx src/__tests__/phase3.test.ts"
+    "test": "tsx src/__tests__/phase1.test.ts && tsx src/__tests__/phase2.test.ts && tsx src/__tests__/phase3.test.ts && tsx src/__tests__/phase4.test.ts"
   },
   "dependencies": {
     "@auctioncraze/auction-engine": "*",

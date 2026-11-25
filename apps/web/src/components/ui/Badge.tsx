@@ -14,14 +14,16 @@ const TONE_MAP: Record<BadgeTone, string> = {
 export function Badge({
   tone = 'neutral',
   className,
-  children
-}: {
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLSpanElement> & {
   tone?: BadgeTone;
   className?: string;
   children: React.ReactNode;
 }) {
   return (
     <span
+      {...props}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider',
         TONE_MAP[tone],

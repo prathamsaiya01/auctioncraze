@@ -1,0 +1,302 @@
+import { LotStatus as DbLotStatus, Prisma, RoomStatus as DbRoomStatus } from '@auctioncraze/database';
+import { calculateNextBidLakhs } from '@auctioncraze/auction-engine';
+import {
+  ActiveLotDetailDto,
+  AuctionFranchiseStateDto,
+  AuctionResultItemDto,
+  AuctionStage,
+  AuctionStateSnapshotDto,
+  CricketRole,
+  LotStatus,
+  RoomRole,
+  RoomStatus,
+  SquadMemberDto
+} from '@auctioncraze/shared';
+import { resolveBidTiers } from '../rooms/roomMapper';
+
+export const AUCTION_ROOM_INCLUDE = {
+  franchises: {
+    include: {
+      purchases: {
+        include: { player: true },
+        orderBy: { soldAt: 'asc' }
+      },
+      retentions: {
+        include: { player: true },
+        orderBy: { slotNumber: 'asc' }
+      }
+    },
+    orderBy: { presetCode: 'asc' }
+  },
+  participants: { orderBy: { joinedAt: 'asc' } },
+  lots: {
+    include: {
+      player: true,
+      bids: {
+        orderBy: { sequenceNumber: 'desc' },
+        take: 30
+      }
+    },
+    orderBy: { sequenceOrder: 'asc' }
+  },
+  retentions: {
+    include: { player: true },
+    orderBy: { slotNumber: 'asc' }
+  }
+} satisfies Prisma.RoomInclude;
+
+export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionStateSnapshotDto {
+  const activeParticipants = (room.participants || []).filter(
+    (p: any) => !p.isRemoved && !p.leftAt
+  );
+
+  const participantById = new Map<string, any>();
+  const ownerByFranchiseId = new Map<string, any>();
+  activeParticipants.forEach((p: any) => {
+    participantById.set(p.id, p);
+    if (p.franchiseId) ownerByFranchiseId.set(p.franchiseId, p);
+  });
+
+  const franchiseById = new Map<string, any>();
+  (room.franchises || []).forEach((f: any) => {
+    franchiseById.set(f.id, f);
+  });
+
+  const bidTiers = resolveBidTiers(room.bidIncrementTiersJson);
+  const lots = room.lots || [];
+
+  const currentLotRaw =
+    (room.currentLotId ? lots.find((l: any) => l.id === room.currentLotId) : null) ||
+    lots.find(
+      (l: any) => l.status === DbLotStatus.ACTIVE || l.status === DbLotStatus.BIDDING_CLOSED
+    ) ||
+    null;
+
+  let currentLot: ActiveLotDetailDto | null = null;
+  if (currentLotRaw) {
+    const { nextBidLakhs, incrementLakhs } = calculateNextBidLakhs(
+      currentLotRaw.currentBidLakhs,
+      currentLotRaw.basePriceLakhs,
+      bidTiers
+    );
+    const winningFranchise = currentLotRaw.winningFranchiseId
+      ? franchiseById.get(currentLotRaw.winningFranchiseId)
+      : null;
+    const winningOwner = winningFranchise ? ownerByFranchiseId.get(winningFranchise.id) : null;
+
+    currentLot = {
+      id: currentLotRaw.id,
+      sequenceOrder: currentLotRaw.sequenceOrder,
+      totalLots: lots.length,
+      setCategory: currentLotRaw.setCategory,
+      status: currentLotRaw.status as LotStatus,
+      basePriceLakhs: currentLotRaw.basePriceLakhs,
+      currentBidLakhs: currentLotRaw.currentBidLakhs,
+      nextBidLakhs,
+      incrementLakhs,
+      winningFranchiseId: winningFranchise?.id || null,
+      winningFranchiseCode: winningFranchise?.presetCode || null,
+      winningFranchiseName: winningFranchise?.name || null,
+      winningFranchiseColor: winningFranchise?.primaryColor || null,
+      winningOwnerName: winningOwner?.displayName || null,
+      player: {
+        id: currentLotRaw.player.id,
+        fullName: currentLotRaw.player.fullName,
+        nationality: currentLotRaw.player.nationality,
+        isOverseas: !!currentLotRaw.player.isOverseas,
+        age: currentLotRaw.player.age,
+        playingRole: currentLotRaw.player.playingRole as CricketRole,
+        battingStyle: currentLotRaw.player.battingStyle,
+        bowlingStyle: currentLotRaw.player.bowlingStyle,
+        imageUrl: currentLotRaw.player.imageUrl
+      },
+      bids: (currentLotRaw.bids || []).map((b: any) => {
+        const fran = franchiseById.get(b.franchiseId);
+        const bidder = participantById.get(b.participantId);
+        return {
+          id: b.id,
+          lotId: b.lotId,
+          franchiseId: b.franchiseId,
+          franchiseCode: fran?.presetCode || '',
+          franchiseColor: fran?.primaryColor || '#38BDF8',
+          participantId: b.participantId,
+          bidderDisplayName: bidder?.displayName || 'Owner',
+          bidAmountLakhs: b.bidAmountLakhs,
+          sequenceNumber: b.sequenceNumber,
+          createdAt: b.createdAt.toISOString()
+        };
+      })
+    };
+  }
+
+  let auctionStage: AuctionStage = 'READY';
+  if (room.status === DbRoomStatus.COMPLETED) {
+    auctionStage = 'COMPLETED';
+  } else if (room.status === DbRoomStatus.LOBBY) {
+    auctionStage = room.configFinalized ? 'READY' : 'CONFIGURING';
+  } else if (room.status === DbRoomStatus.PAUSED || room.isPaused) {
+    auctionStage = 'PAUSED';
+  } else if (currentLotRaw?.status === DbLotStatus.BIDDING_CLOSED) {
+    auctionStage = 'BIDDING_CLOSED';
+  } else if (currentLotRaw?.status === DbLotStatus.SOLD) {
+    auctionStage = 'PLAYER_SOLD';
+  } else if (currentLotRaw?.status === DbLotStatus.UNSOLD) {
+    auctionStage = 'PLAYER_UNSOLD';
+  } else if (room.status === DbRoomStatus.LIVE) {
+    auctionStage = 'LIVE';
+  }
+
+  const deadlineMs =
+    !room.isPaused &&
+    room.status === DbRoomStatus.LIVE &&
+    currentLotRaw?.status === DbLotStatus.ACTIVE &&
+    room.timerDeadlineMs != null
+      ? Number(room.timerDeadlineMs)
+      : null;
+
+  let remainingSeconds = 0;
+  if (room.isPaused || room.status === DbRoomStatus.PAUSED) {
+    remainingSeconds = Math.max(0, Math.ceil((room.timerRemainingMs || 0) / 1000));
+  } else if (deadlineMs !== null) {
+    remainingSeconds = Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000));
+  }
+
+  const franchises: AuctionFranchiseStateDto[] = (room.franchises || []).map((f: any) => {
+    const owner = ownerByFranchiseId.get(f.id);
+    const retainedSquad: SquadMemberDto[] = (f.retentions || []).map((r: any) => ({
+      playerId: r.playerId,
+      fullName: r.player?.fullName || 'Unknown',
+      nationality: r.player?.nationality || 'India',
+      isOverseas: !!r.player?.isOverseas,
+      playingRole: (r.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
+      priceLakhs: r.retentionCostLakhs,
+      acquisitionType: 'RETAINED'
+    }));
+    const boughtSquad: SquadMemberDto[] = (f.purchases || []).map((pur: any) => ({
+      playerId: pur.playerId,
+      fullName: pur.player?.fullName || 'Unknown',
+      nationality: pur.player?.nationality || 'India',
+      isOverseas: !!pur.player?.isOverseas,
+      playingRole: (pur.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
+      priceLakhs: pur.purchasePriceLakhs,
+      acquisitionType: 'AUCTION'
+    }));
+
+    return {
+      id: f.id,
+      presetCode: f.presetCode,
+      name: f.name,
+      abbreviation: f.abbreviation,
+      primaryColor: f.primaryColor,
+      secondaryColor: f.secondaryColor,
+      initialPurseLakhs: f.initialPurseLakhs,
+      purseAdjustmentLakhs: f.purseAdjustmentLakhs ?? 0,
+      remainingPurseLakhs: f.remainingPurseLakhs,
+      squadCount: f.squadCount,
+      overseasCount: f.overseasCount,
+      retainedCount: f.retainedCount ?? 0,
+      ownerParticipantId: owner?.id || null,
+      ownerDisplayName: owner?.displayName || null,
+      squad: [...retainedSquad, ...boughtSquad]
+    };
+  });
+
+  const upNextLots = lots
+    .filter((l: any) => l.status === DbLotStatus.QUEUED)
+    .slice(0, 6)
+    .map((l: any) => ({
+      id: l.id,
+      playerId: l.playerId,
+      fullName: l.player?.fullName || 'Unknown',
+      nationality: l.player?.nationality || 'India',
+      isOverseas: !!l.player?.isOverseas,
+      playingRole: (l.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
+      sequenceOrder: l.sequenceOrder,
+      setCategory: l.setCategory,
+      basePriceLakhs: l.basePriceLakhs,
+      status: l.status as LotStatus
+    }));
+
+  const recentResults: AuctionResultItemDto[] = lots
+    .filter(
+      (l: any) =>
+        l.status === DbLotStatus.SOLD ||
+        l.status === DbLotStatus.UNSOLD ||
+        l.status === DbLotStatus.SKIPPED
+    )
+    .sort((a: any, b: any) => {
+      const ta = a.settledAt ? new Date(a.settledAt).getTime() : 0;
+      const tb = b.settledAt ? new Date(b.settledAt).getTime() : 0;
+      return tb - ta;
+    })
+    .slice(0, 12)
+    .map((l: any) => {
+      const winFran = l.winningFranchiseId ? franchiseById.get(l.winningFranchiseId) : null;
+      return {
+        lotId: l.id,
+        playerId: l.playerId,
+        playerName: l.player?.fullName || 'Unknown',
+        playingRole: (l.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
+        isOverseas: !!l.player?.isOverseas,
+        status: l.status as LotStatus,
+        soldPriceLakhs: l.status === DbLotStatus.SOLD ? l.currentBidLakhs : null,
+        franchiseCode: winFran?.presetCode || null,
+        franchiseColor: winFran?.primaryColor || null,
+        settledAt: l.settledAt ? l.settledAt.toISOString() : null
+      };
+    });
+
+  return {
+    roomId: room.id,
+    roomCode: room.code,
+    roomName: room.name,
+    roomStatus: room.status as RoomStatus,
+    auctionStage,
+    version: room.version,
+    hostParticipantId: room.hostParticipantId,
+    isPaused: !!room.isPaused,
+    settings: {
+      auctionMode: room.auctionMode,
+      initialPurseLakhs: room.initialPurseLakhs,
+      minSquadSize: room.minSquadSize,
+      maxSquadSize: room.maxSquadSize,
+      maxOverseas: room.maxOverseas,
+      maxSpectators: room.maxSpectators,
+      minOwnersRequired: room.minOwnersRequired,
+      defaultBasePriceLakhs: room.defaultBasePriceLakhs,
+      bidIncrementTiers: bidTiers,
+      countdownSeconds: room.countdownSeconds,
+      allowLateBidExtension: room.allowLateBidExtension,
+      bidExtensionSeconds: room.bidExtensionSeconds,
+      extensionThresholdSeconds: room.extensionThresholdSeconds,
+      allowHostSkip: room.allowHostSkip,
+      allowTeamPurseAdjustments: room.allowTeamPurseAdjustments,
+      retentionEnabled: room.retentionEnabled,
+      maxRetentionsPerFranchise: room.maxRetentionsPerFranchise,
+      maxOverseasRetentions: room.maxOverseasRetentions
+    },
+    currentLot,
+    timer: {
+      lotId: currentLot?.id || null,
+      deadlineMs,
+      remainingSeconds,
+      isPaused: !!room.isPaused || room.status === DbRoomStatus.PAUSED,
+      serverTimeMs: nowMs
+    },
+    franchises,
+    participants: activeParticipants.map((p: any) => ({
+      id: p.id,
+      guestSessionId: p.guestSessionId,
+      displayName: p.displayName,
+      role: p.role as RoomRole,
+      franchiseId: p.franchiseId,
+      franchiseCode: p.franchiseId ? franchiseById.get(p.franchiseId)?.presetCode || null : null,
+      isReady: p.isReady,
+      isConnected: p.isConnected,
+      joinedAt: p.joinedAt.toISOString()
+    })),
+    upNextLots,
+    recentResults,
+    serverTimeMs: nowMs
+  };
+}

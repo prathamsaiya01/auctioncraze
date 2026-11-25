@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authenticateGuest, optionalAuthenticateGuest } from '../../middleware/auth';
 import { rateLimit } from '../../middleware/rateLimit';
 import { RoomController } from './roomController';
+import auctionRoutes from '../auction/auctionRoutes';
 
 const router = Router();
 
@@ -36,5 +37,8 @@ router.post('/:code/pool/auto-fill', authenticateGuest, RoomController.autoFillP
 router.post('/:code/retentions', authenticateGuest, RoomController.addRetention);
 router.delete('/:code/retentions/:retentionId', authenticateGuest, RoomController.removeRetention);
 router.post('/:code/config/finalize', authenticateGuest, RoomController.finalizeConfig);
+
+// Phase 4: Real-Time Auction Engine
+router.use('/:code/auction', auctionRoutes);
 
 export default router;

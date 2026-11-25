@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   AUCTION_MODE_PRESETS,
@@ -8,7 +9,8 @@ import {
   BidTierConfig,
   CricketRole,
   MasterPlayerCatalogDto,
-  RoomDetailDto
+  RoomDetailDto,
+  RoomStatus
 } from '@auctioncraze/shared';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
@@ -24,6 +26,7 @@ import {
   Gavel,
   Layers,
   Lock,
+  Play,
   Plus,
   Search,
   ShieldCheck,
@@ -53,8 +56,10 @@ interface AuctionConfigPanelProps {
 }
 
 export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfigPanelProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<ConfigTab>('MODE');
   const [isSaving, setIsSaving] = useState(false);
+  const [isStartingAuction, setIsStartingAuction] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [configSuccess, setConfigSuccess] = useState<string | null>(null);
 
@@ -1110,6 +1115,50 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
               <p className="text-[11px] text-stadium-muted leading-snug">{check.message}</p>
             </div>
           ))}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-stadium-border">
+          <p className="text-xs text-stadium-muted">
+            {room.status !== RoomStatus.LOBBY
+              ? 'This auction is underway or finished. Enter the live floor now.'
+              : isHost
+              ? room.readiness.isReadyToStart
+                ? 'All readiness checks passed. Launch the live broadcast auction room for all connected franchises.'
+                : 'Complete the remaining checks above (including locking config and readying owners) to unlock auction launch.'
+              : 'Waiting for the Host to start the live auction once all checks pass.'}
+          </p>
+
+          {room.status !== RoomStatus.LOBBY ? (
+            <Button
+              variant="gold"
+              onClick={() => router.push(`/room/${room.code}/auction`)}
+              leftIcon={<Play className="w-4 h-4" />}
+              data-testid="enter-live-auction-btn"
+            >
+              Enter Live Auction
+            </Button>
+          ) : isHost ? (
+            <Button
+              variant="gold"
+              disabled={!room.readiness.isReadyToStart || isStartingAuction}
+              isLoading={isStartingAuction}
+              leftIcon={<Gavel className="w-4 h-4" />}
+              data-testid="start-auction-btn"
+              onClick={async () => {
+                setConfigError(null);
+                setIsStartingAuction(true);
+                try {
+                  await api.post(`/rooms/${room.code}/auction/start`, {});
+                  router.push(`/room/${room.code}/auction`);
+                } catch (err: any) {
+                  setConfigError(err?.message || 'Failed to start auction');
+                  setIsStartingAuction(false);
+                }
+              }}
+            >
+              Start Live Auction
+            </Button>
+          ) : null}
         </div>
       </Card>
     </div>

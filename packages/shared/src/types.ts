@@ -145,3 +145,123 @@ export interface PublicRoomSummaryDto {
   countdownSeconds: number;
   createdAt: string;
 }
+
+export type AuctionStage =
+  | 'CONFIGURING'
+  | 'READY'
+  | 'LIVE'
+  | 'PAUSED'
+  | 'BIDDING_CLOSED'
+  | 'PLAYER_SOLD'
+  | 'PLAYER_UNSOLD'
+  | 'COMPLETED';
+
+export interface SquadMemberDto {
+  playerId: string;
+  fullName: string;
+  nationality: string;
+  isOverseas: boolean;
+  playingRole: CricketRole;
+  priceLakhs: number;
+  acquisitionType: 'RETAINED' | 'AUCTION';
+}
+
+export interface AuctionFranchiseStateDto {
+  id: string;
+  presetCode: string;
+  name: string;
+  abbreviation: string;
+  primaryColor: string;
+  secondaryColor: string;
+  initialPurseLakhs: number;
+  purseAdjustmentLakhs: number;
+  remainingPurseLakhs: number;
+  squadCount: number;
+  overseasCount: number;
+  retainedCount: number;
+  ownerParticipantId: string | null;
+  ownerDisplayName: string | null;
+  squad: SquadMemberDto[];
+}
+
+export interface AuctionBidDto {
+  id: string;
+  lotId: string;
+  franchiseId: string;
+  franchiseCode: string;
+  franchiseColor: string;
+  participantId: string;
+  bidderDisplayName: string;
+  bidAmountLakhs: number;
+  sequenceNumber: number;
+  createdAt: string;
+}
+
+export interface ActiveLotDetailDto {
+  id: string;
+  sequenceOrder: number;
+  totalLots: number;
+  setCategory: string;
+  status: LotStatus;
+  basePriceLakhs: number;
+  currentBidLakhs: number;
+  nextBidLakhs: number;
+  incrementLakhs: number;
+  winningFranchiseId: string | null;
+  winningFranchiseCode: string | null;
+  winningFranchiseName: string | null;
+  winningFranchiseColor: string | null;
+  winningOwnerName: string | null;
+  player: {
+    id: string;
+    fullName: string;
+    nationality: string;
+    isOverseas: boolean;
+    age: number | null;
+    playingRole: CricketRole;
+    battingStyle: string;
+    bowlingStyle: string;
+    imageUrl: string | null;
+  };
+  bids: AuctionBidDto[];
+}
+
+export interface AuctionTimerDto {
+  lotId: string | null;
+  deadlineMs: number | null;
+  remainingSeconds: number;
+  isPaused: boolean;
+  serverTimeMs: number;
+}
+
+export interface AuctionResultItemDto {
+  lotId: string;
+  playerId: string;
+  playerName: string;
+  playingRole: CricketRole;
+  isOverseas: boolean;
+  status: LotStatus;
+  soldPriceLakhs: number | null;
+  franchiseCode: string | null;
+  franchiseColor: string | null;
+  settledAt: string | null;
+}
+
+export interface AuctionStateSnapshotDto {
+  roomId: string;
+  roomCode: string;
+  roomName: string;
+  roomStatus: RoomStatus;
+  auctionStage: AuctionStage;
+  version: number;
+  hostParticipantId: string | null;
+  isPaused: boolean;
+  settings: RoomSettingsDto;
+  currentLot: ActiveLotDetailDto | null;
+  timer: AuctionTimerDto;
+  franchises: AuctionFranchiseStateDto[];
+  participants: RoomParticipantDto[];
+  upNextLots: RoomPlayerLotDto[];
+  recentResults: AuctionResultItemDto[];
+  serverTimeMs: number;
+}

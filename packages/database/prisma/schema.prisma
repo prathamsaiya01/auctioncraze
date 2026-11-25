@@ -126,6 +126,8 @@ model Room {
   configFinalizedAt         DateTime?
   isPaused                  Boolean        @default(false)
   currentLotId              String?
+  timerDeadlineMs           BigInt?
+  timerRemainingMs          Int?
   startedAt                 DateTime?
   endedAt                   DateTime?
   createdAt                 DateTime       @default(now())
@@ -235,6 +237,7 @@ model MasterPlayer {
   seasonStats PlayerSeasonStat[]
   lots        RoomPlayerLot[]
   retentions  RoomRetention[]
+  purchases   Purchase[]
 
   @@index([fullName])
   @@index([playingRole, isOverseas])
@@ -325,6 +328,7 @@ model Purchase {
 
   lot         RoomPlayerLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
   franchise   RoomFranchise @relation(fields: [franchiseId], references: [id], onDelete: Cascade)
+  player      MasterPlayer  @relation(fields: [playerId], references: [id], onDelete: Cascade)
   purseLedger PurseLedger?
 
   @@index([roomId, franchiseId])

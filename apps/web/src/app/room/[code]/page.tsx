@@ -27,10 +27,12 @@ import {
   Copy,
   Crown,
   Eye,
+  Gavel,
   Globe,
   KeyRound,
   Lock,
   LogOut,
+  Play,
   Radio,
   Settings2,
   Share2,
@@ -261,6 +263,14 @@ export default function RoomLobbyPage() {
       }
     };
 
+    const onAuctionStarted = (evt: any) => {
+      const targetCode = evt?.roomCode || room?.code;
+      pushActivity('Live auction started! Entering the auction floor...', 'gold');
+      if (targetCode) {
+        router.push(`/room/${targetCode}/auction`);
+      }
+    };
+
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on(SOCKET_EVENTS.ROOM_STATE, onRoomState);
@@ -276,6 +286,7 @@ export default function RoomLobbyPage() {
     socket.on(SOCKET_EVENTS.AUCTION_CONFIG_UPDATED, onConfigUpdated);
     socket.on(SOCKET_EVENTS.AUCTION_CONFIG_FINALIZED, onConfigFinalized);
     socket.on(SOCKET_EVENTS.AUCTION_READINESS_CHANGED, onReadinessChanged);
+    socket.on(SOCKET_EVENTS.AUCTION_STARTED, onAuctionStarted);
 
     if (socket.connected) {
       onConnect();
@@ -297,8 +308,9 @@ export default function RoomLobbyPage() {
       socket.off(SOCKET_EVENTS.AUCTION_CONFIG_UPDATED, onConfigUpdated);
       socket.off(SOCKET_EVENTS.AUCTION_CONFIG_FINALIZED, onConfigFinalized);
       socket.off(SOCKET_EVENTS.AUCTION_READINESS_CHANGED, onReadinessChanged);
+      socket.off(SOCKET_EVENTS.AUCTION_STARTED, onAuctionStarted);
     };
-  }, [room?.code, myParticipant?.id, token, pushActivity]);
+  }, [room?.code, myParticipant?.id, token, pushActivity, router]);
 
   const handleJoinRoom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -713,25 +725,60 @@ export default function RoomLobbyPage() {
             </div>
           </div>
 
-          {myParticipant && myParticipant.role !== RoomRole.SPECTATOR && (
+          {myParticipant && (
             <div className="flex flex-wrap items-center gap-3 shrink-0">
-              <Button
-                variant={myParticipant.isReady ? 'surface' : 'gold'}
-                onClick={handleToggleReady}
-                isLoading={isActing}
-                leftIcon={<CheckCircle2 className="w-4 h-4" />}
-              >
-                {myParticipant.isReady ? 'Ready (Click to Cancel)' : 'Mark as Ready'}
-              </Button>
-              {!isHost && (
+              {room.status !== RoomStatus.LOBBY && (
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleClaimFranchise(null)}
-                  disabled={isActing}
+                  variant="gold"
+                  onClick={() => router.push(`/room/${room.code}/auction`)}
+                  leftIcon={<Play className="w-4 h-4" />}
+                  data-testid="lobby-enter-auction-btn"
                 >
-                  Switch to Spectator
+                  Enter Live Auction
                 </Button>
+              )}
+              {myParticipant.role !== RoomRole.SPECTATOR && room.status === RoomStatus.LOBBY && (
+                <>
+                  {isHost && room.readiness.isReadyToStart && (
+                    <Button
+                      variant="gold"
+                      onClick={async () => {
+                        setActionError(null);
+                        setIsActing(true);
+                        try {
+                          await api.post(`/rooms/${room.code}/auction/start`, {});
+                          router.push(`/room/${room.code}/auction`);
+                        } catch (err: any) {
+                          setActionError(err?.message || 'Unable to start live auction');
+                          setIsActing(false);
+                        }
+                      }}
+                      isLoading={isActing}
+                      leftIcon={<Gavel className="w-4 h-4" />}
+                      data-testid="lobby-start-auction-btn"
+                    >
+                      Start Auction
+                    </Button>
+                  )}
+                  <Button
+                    variant={myParticipant.isReady ? 'surface' : 'gold'}
+                    onClick={handleToggleReady}
+                    isLoading={isActing}
+                    leftIcon={<CheckCircle2 className="w-4 h-4" />}
+                  >
+                    {myParticipant.isReady ? 'Ready (Click to Cancel)' : 'Mark as Ready'}
+                  </Button>
+                  {!isHost && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleClaimFranchise(null)}
+                      disabled={isActing}
+                    >
+                      Switch to Spectator
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           )}
