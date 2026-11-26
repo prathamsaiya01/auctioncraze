@@ -155,6 +155,11 @@ export default function AuctionCrazeHomePage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <Link href="/seasons">
+              <Button variant="electric" size="sm" data-testid="nav-seasons-btn">
+                Seasons &amp; Leaderboard
+              </Button>
+            </Link>
             <Link href="/players">
               <Button variant="surface" size="sm" data-testid="nav-player-catalog-btn">
                 Player Archive

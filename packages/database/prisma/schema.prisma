@@ -71,6 +71,11 @@ enum LedgerEntryType {
   REFUND_REVERSAL
 }
 
+enum SeasonStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 // -------------------------------------------------------------
 // GUEST SESSIONS & OPTIONAL ACCOUNTS (NO SUPER ADMIN)
 // -------------------------------------------------------------
@@ -87,6 +92,7 @@ model GuestSession {
 
   participants RoomParticipant[]
   chatMessages ChatMessage[]
+  seasonsHosted Season[]
 
   @@index([expiresAt])
 }
@@ -122,6 +128,11 @@ model Room {
   allowPlayerTrades         Boolean        @default(false)
   allowCustomTeamName       Boolean        @default(false)
   allowLateJoin             Boolean        @default(true)
+  chatEnabled               Boolean        @default(true)
+  spectatorChatEnabled      Boolean        @default(false)
+  seasonId                  String?
+  seasonMonthLabel          String?
+  seasonMonthKey            String?
   retentionEnabled          Boolean        @default(false)
   maxRetentionsPerFranchise Int            @default(4)
   maxOverseasRetentions     Int            @default(2)
@@ -144,9 +155,11 @@ model Room {
   chatMessages          ChatMessage[]
   postAuctionSnapshots  PostAuctionRatingSnapshot[]
   tradeProposals        TradeProposal[]
+  season                Season?                     @relation(fields: [seasonId], references: [id], onDelete: SetNull)
 
   @@index([visibility, status])
   @@index([code])
+  @@index([seasonId])
 }
 
 model RoomFranchise {
@@ -164,10 +177,12 @@ model RoomFranchise {
   squadCount           Int      @default(0)
   overseasCount        Int      @default(0)
   retainedCount        Int      @default(0)
+  seasonEntryId        String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  room        Room             @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  room        Room                  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  seasonEntry SeasonFranchiseEntry? @relation(fields: [seasonEntryId], references: [id], onDelete: SetNull)
   owner       RoomParticipant?
   retentions  RoomRetention[]
   bids                   Bid[]
@@ -207,6 +222,7 @@ model RoomParticipant {
   isReady         Boolean   @default(false)
   isConnected     Boolean   @default(true)
   isRemoved       Boolean   @default(false)
+  isChatMuted     Boolean   @default(false)
   lastHeartbeatAt DateTime  @default(now())
   joinedAt        DateTime  @default(now())
   leftAt          DateTime?
@@ -415,13 +431,20 @@ model AuctionEvent {
 }
 
 model ChatMessage {
-  id             String   @id @default(uuid())
-  roomId         String
-  guestSessionId String
-  senderName     String
-  franchiseCode  String?
-  message        String
-  createdAt      DateTime @default(now())
+  id                   String    @id @default(uuid())
+  roomId               String
+  guestSessionId       String
+  participantId        String?
+  senderName           String
+  senderRole           String    @default("OWNER")
+  franchiseCode        String?
+  franchiseDisplayName String?
+  message              String
+  isDeleted            Boolean   @default(false)
+  deletedBySessionId   String?
+  deletedAt            DateTime?
+  idempotencyKey       String?   @unique
+  createdAt            DateTime  @default(now())
 
   room         Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
   guestSession GuestSession @relation(fields: [guestSessionId], references: [id], onDelete: Cascade)
@@ -526,4 +549,78 @@ model TradeProposalItem {
 
   @@unique([tradeId, playerId])
   @@index([playerId])
+}
+
+// -------------------------------------------------------------
+// PHASE 7: SEASON MANAGEMENT, LOGIN-FREE IDENTITY & LEADERBOARD
+// -------------------------------------------------------------
+
+model Season {
+  id            String       @id @default(uuid())
+  code          String       @unique
+  name          String
+  year          Int
+  description   String?
+  startDate     DateTime?
+  endDate       DateTime?
+  status        SeasonStatus @default(ACTIVE)
+  hostSessionId String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  hostSession GuestSession           @relation(fields: [hostSessionId], references: [id], onDelete: Cascade)
+  entries     SeasonFranchiseEntry[]
+  rooms       Room[]
+  pointLedger SeasonPointLedger[]
+
+  @@index([status, year])
+  @@index([hostSessionId])
+}
+
+model SeasonFranchiseEntry {
+  id                    String   @id @default(uuid())
+  seasonId              String
+  presetCode            String
+  name                  String
+  abbreviation          String
+  primaryColor          String
+  secondaryColor        String
+  customSuffix          String?
+  controllerSessionId   String?
+  controllerDisplayName String?
+  recoveryCodeHash      String?
+  totalPoints           Int      @default(0)
+  auctionsJoined        Int      @default(0)
+  previousRank          Int?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  season         Season              @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  pointLedger    SeasonPointLedger[]
+  roomFranchises RoomFranchise[]
+
+  @@unique([seasonId, presetCode])
+  @@index([seasonId, totalPoints])
+}
+
+model SeasonPointLedger {
+  id                  String   @id @default(uuid())
+  seasonId            String
+  entryId             String
+  roomId              String?
+  monthKey            String?
+  pointsDelta         Int
+  balanceAfter        Int
+  reason              String
+  adjustedBySessionId String
+  adjustedByName      String
+  createdAt           DateTime @default(now())
+
+  season Season               @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  entry  SeasonFranchiseEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([seasonId, createdAt])
+  @@index([entryId, createdAt])
+  @@index([seasonId, monthKey])
+  @@index([seasonId, roomId])
 }

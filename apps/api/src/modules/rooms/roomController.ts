@@ -34,6 +34,9 @@ export class RoomController {
         franchiseCode: payload.franchiseCode,
         visibility: payload.visibility,
         auctionMode: payload.auctionMode,
+        seasonCode: payload.seasonCode,
+        seasonMonthLabel: payload.seasonMonthLabel,
+        seasonMonthKey: payload.seasonMonthKey,
         settings: payload.settings
       });
 

@@ -21,6 +21,7 @@ import { FranchiseEmblem } from '@/components/ui/FranchiseEmblem';
 import { Modal } from '@/components/ui/Modal';
 import { AuctionConfigPanel } from '@/components/room/AuctionConfigPanel';
 import { FranchiseNicknameEditor } from '@/components/room/FranchiseNicknameEditor';
+import { RoomChatPanel } from '@/components/room/RoomChatPanel';
 import {
   ArrowLeft,
   Check,
@@ -669,6 +670,17 @@ export default function RoomLobbyPage() {
                 <span>
                   {owners.length}/{room.franchises.length} Franchises · {spectators.length} Spectators
                 </span>
+                {room.seasonCode && (
+                  <>
+                    <span>•</span>
+                    <Link
+                      href={`/seasons/${room.seasonCode}`}
+                      className="text-electric-300 hover:text-electric-200 font-semibold"
+                    >
+                      Season: {room.seasonName || room.seasonCode}
+                    </Link>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1371,6 +1383,17 @@ export default function RoomLobbyPage() {
           </Button>
         </div>
       </Modal>
+
+      {myParticipant && token && session && (
+        <RoomChatPanel
+          roomCode={room.code}
+          token={token}
+          mySessionId={session.id}
+          myRole={myParticipant.role}
+          isHost={isHost}
+          participants={room.participants}
+        />
+      )}
     </div>
   );
 }

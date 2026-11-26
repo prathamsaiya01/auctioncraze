@@ -290,6 +290,8 @@ export class AuctionService {
         );
       }
 
+      const previousBidLakhs = lot.winningFranchiseId ? lot.currentBidLakhs : lot.basePriceLakhs;
+      const hadPreviousBidder = !!lot.winningFranchiseId;
       const seq = (lot.bids[0]?.sequenceNumber || 0) + 1;
       const lotRound = lot.roundNumber ?? 1;
       const createdBid = await tx.bid.create({
@@ -384,11 +386,13 @@ export class AuctionService {
         ),
         nextBidLakhs,
         incrementLakhs,
+        previousBidLakhs,
+        hadPreviousBidder,
         timerExtended,
         deadlineMs: nextDeadlineMs,
         remainingSeconds: nextDeadlineMs ? Math.max(0, Math.ceil((nextDeadlineMs - nowMs) / 1000)) : 0
       };
-    });
+    }, { maxWait: 10000, timeout: 15000 });
 
     if (!txResult.duplicate) {
       if (txResult.timerExtended && txResult.deadlineMs !== null) {
@@ -410,6 +414,8 @@ export class AuctionService {
         bid: txResult.bidDto,
         winningFranchiseName: txResult.franchiseName,
         winningFranchiseDisplayName: txResult.franchiseDisplayName,
+        previousBidLakhs: txResult.previousBidLakhs,
+        hadPreviousBidder: txResult.hadPreviousBidder,
         nextBidLakhs: txResult.nextBidLakhs,
         incrementLakhs: txResult.incrementLakhs,
         serverTimeMs: nowMs
@@ -590,7 +596,11 @@ export class AuctionService {
 
     await AuctionTimerManager.setRunningTimer(normalized, txResult.lotId, txResult.newDeadlineMs);
     const snapshot = mapAuctionStateSnapshot(txResult.full, nowMs);
-    emitToRoom(normalized, SOCKET_EVENTS.TIMER_UPDATED, snapshot.timer);
+    emitToRoom(normalized, SOCKET_EVENTS.TIMER_UPDATED, {
+      ...snapshot.timer,
+      extended: true,
+      extraSeconds
+    });
 
     return snapshot;
   }

@@ -74,3 +74,8 @@ export enum TradeDirection {
   OUTGOING = 'OUTGOING',
   INCOMING = 'INCOMING'
 }
+
+export enum SeasonStatus {
+  ACTIVE = 'ACTIVE',
+  ARCHIVED = 'ARCHIVED'
+}

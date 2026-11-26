@@ -39,6 +39,9 @@ interface CreateRoomInput {
   franchiseCode: string;
   visibility: RoomVisibility;
   auctionMode?: AuctionMode;
+  seasonCode?: string;
+  seasonMonthLabel?: string;
+  seasonMonthKey?: string;
   settings: {
     initialPurseLakhs: number;
     minSquadSize: number;
@@ -103,6 +106,32 @@ export class RoomService {
       const mode = input.auctionMode || AuctionMode.MEGA;
       const modePreset = AUCTION_MODE_PRESETS[mode];
 
+      let linkedSeasonId: string | null = null;
+      const seasonEntriesByPreset = new Map<string, { id: string; customSuffix: string | null; controllerSessionId: string | null }>();
+      if (input.seasonCode) {
+        const season = await tx.season.findUnique({
+          where: { code: input.seasonCode.trim().toUpperCase() },
+          include: { entries: true }
+        });
+        if (!season) {
+          throw new AppError(`Season '${input.seasonCode}' not found.`, 404, 'SEASON_NOT_FOUND');
+        }
+        if (season.status === 'ARCHIVED') {
+          throw new AppError('Cannot create rooms in an archived season.', 409, 'SEASON_ARCHIVED');
+        }
+        if (season.hostSessionId !== input.guestSessionId) {
+          throw new AppError('Only the season host may attach rooms to this season.', 403, 'HOST_ONLY');
+        }
+        linkedSeasonId = season.id;
+        for (const e of season.entries) {
+          seasonEntriesByPreset.set(e.presetCode, {
+            id: e.id,
+            customSuffix: e.customSuffix,
+            controllerSessionId: e.controllerSessionId
+          });
+        }
+      }
+
       const room = await tx.room.create({
         data: {
           code: roomCode,
@@ -111,6 +140,9 @@ export class RoomService {
           inviteToken,
           status: DbRoomStatus.LOBBY,
           auctionMode: mode as DbAuctionMode,
+          seasonId: linkedSeasonId,
+          seasonMonthLabel: input.seasonMonthLabel || null,
+          seasonMonthKey: input.seasonMonthKey || null,
           initialPurseLakhs: input.settings.initialPurseLakhs,
           minSquadSize: input.settings.minSquadSize,
           maxSquadSize: input.settings.maxSquadSize,
@@ -136,16 +168,20 @@ export class RoomService {
 
       const createdFranchises = [];
       for (const preset of IPL_FRANCHISE_PRESETS) {
+        const seasonEntry = seasonEntriesByPreset.get(preset.code);
+        const allowCustom = input.settings.allowCustomTeamName ?? ROOM_DEFAULTS.ALLOW_CUSTOM_TEAM_NAME;
         const franchise = await tx.roomFranchise.create({
           data: {
             roomId: room.id,
             presetCode: preset.code,
             name: preset.name,
+            customSuffix: allowCustom && seasonEntry?.customSuffix ? seasonEntry.customSuffix : null,
             abbreviation: preset.shortName,
             primaryColor: preset.primaryColor,
             secondaryColor: preset.secondaryColor,
             initialPurseLakhs: input.settings.initialPurseLakhs,
-            remainingPurseLakhs: input.settings.initialPurseLakhs
+            remainingPurseLakhs: input.settings.initialPurseLakhs,
+            seasonEntryId: seasonEntry?.id || null
           }
         });
 
@@ -180,6 +216,25 @@ export class RoomService {
         where: { id: room.id },
         data: { hostParticipantId: hostParticipant.id }
       });
+
+      if (hostFranchise.seasonEntryId) {
+        const joinedCount = await tx.roomFranchise.count({
+          where: { seasonEntryId: hostFranchise.seasonEntryId, owner: { isNot: null } }
+        });
+        const entry = await tx.seasonFranchiseEntry.findUnique({
+          where: { id: hostFranchise.seasonEntryId },
+          select: { controllerSessionId: true }
+        });
+        await tx.seasonFranchiseEntry.update({
+          where: { id: hostFranchise.seasonEntryId },
+          data: {
+            auctionsJoined: joinedCount,
+            ...(entry && !entry.controllerSessionId
+              ? { controllerSessionId: input.guestSessionId, controllerDisplayName: hostDisplayName }
+              : {})
+          }
+        });
+      }
 
       await appendRoomEvent(tx, room.id, 1, 'ROOM_CREATED', {
         roomCode: room.code,
@@ -424,6 +479,33 @@ export class RoomService {
       });
 
       if (targetFranchiseId) {
+        const joinedFran = room.franchises.find((f) => f.id === targetFranchiseId);
+        if (joinedFran?.seasonEntryId) {
+          const sEntry = await tx.seasonFranchiseEntry.findUnique({
+            where: { id: joinedFran.seasonEntryId }
+          });
+          if (sEntry) {
+            const joinedCount = await tx.roomFranchise.count({
+              where: { seasonEntryId: sEntry.id, owner: { isNot: null } }
+            });
+            await tx.seasonFranchiseEntry.update({
+              where: { id: sEntry.id },
+              data: {
+                auctionsJoined: joinedCount,
+                ...(!sEntry.controllerSessionId
+                  ? { controllerSessionId: input.guestSessionId, controllerDisplayName: displayName }
+                  : {})
+              }
+            });
+            if (room.allowCustomTeamName && !joinedFran.customSuffix && sEntry.customSuffix) {
+              await tx.roomFranchise.update({
+                where: { id: joinedFran.id },
+                data: { customSuffix: sEntry.customSuffix }
+              });
+            }
+          }
+        }
+
         await appendRoomEvent(tx, room.id, updatedVersion, SOCKET_EVENTS.FRANCHISE_CLAIMED, {
           participantId: participant.id,
           displayName: participant.displayName,
@@ -447,7 +529,7 @@ export class RoomService {
           joinedAt: participant.joinedAt.toISOString()
         }
       };
-    });
+    }, { maxWait: 10000, timeout: 15000 });
 
     const publicSnapshot = mapRoomToDetailDto(result.fullRoom, false);
     emitToRoom(normalized, SOCKET_EVENTS.PARTICIPANT_JOINED, {
@@ -690,7 +772,7 @@ export class RoomService {
 
       const updated = await fetchRoomWithRelations(tx, room.id);
       return { fullRoom: updated, participantId: participant.id, displayName: participant.displayName, eventName };
-    });
+    }, { maxWait: 10000, timeout: 15000 });
 
     emitToRoom(normalized, result.eventName, {
       roomCode: normalized,
@@ -1226,6 +1308,19 @@ export class RoomService {
         where: { id: targetFranchise.id },
         data: { customSuffix: cleanSuffix }
       });
+
+      if (targetFranchise.seasonEntryId) {
+        const sEntry = await tx.seasonFranchiseEntry.findUnique({
+          where: { id: targetFranchise.seasonEntryId },
+          select: { id: true, controllerSessionId: true }
+        });
+        if (sEntry && (!sEntry.controllerSessionId || sEntry.controllerSessionId === guestSessionId)) {
+          await tx.seasonFranchiseEntry.update({
+            where: { id: sEntry.id },
+            data: { customSuffix: cleanSuffix }
+          });
+        }
+      }
 
       const nextVersion = room.version + 1;
       await tx.room.update({ where: { id: room.id }, data: { version: nextVersion } });

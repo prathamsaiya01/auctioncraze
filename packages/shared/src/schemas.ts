@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AuctionMode, CricketRole, RoomRole, RoomVisibility } from './enums';
+import { AuctionMode, CricketRole, RoomRole, RoomVisibility, SeasonStatus } from './enums';
 import { FRANCHISE_CODES } from './franchises';
 import { ROOM_DEFAULTS } from './constants';
 
@@ -177,6 +177,9 @@ export const createRoomSchema = z.object({
   }),
   visibility: z.nativeEnum(RoomVisibility).default(RoomVisibility.PUBLIC),
   auctionMode: z.nativeEnum(AuctionMode).default(AuctionMode.MEGA),
+  seasonCode: z.string().trim().toUpperCase().min(4).max(20).optional(),
+  seasonMonthLabel: z.string().trim().max(48).optional(),
+  seasonMonthKey: z.string().trim().regex(/^\d{4}-\d{2}$/).optional(),
   settings: roomSettingsSchema.default({})
 });
 
@@ -349,4 +352,85 @@ export const createTradeProposalSchema = z
 
 export const respondTradeSchema = z.object({
   idempotencyKey: z.string().trim().min(6).max(128).optional()
+});
+
+// -------------------------------------------------------------
+// PHASE 7: SEASON MANAGEMENT, LEADERBOARD & CHAT SCHEMAS
+// -------------------------------------------------------------
+
+export const createSeasonSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(3, 'Season name must be at least 3 characters')
+    .max(64, 'Season name cannot exceed 64 characters'),
+  year: z.number().int().min(2008).max(2100),
+  description: z.string().trim().max(280, 'Description cannot exceed 280 characters').optional(),
+  startDate: z.string().trim().optional(),
+  endDate: z.string().trim().optional(),
+  displayName: displayNameSchema.optional()
+});
+
+export const createSeasonRoomSchema = z.object({
+  roomName: z
+    .string()
+    .trim()
+    .min(3, 'Auction name must be at least 3 characters')
+    .max(50, 'Auction name cannot exceed 50 characters'),
+  franchiseCode: z.string().refine((code) => FRANCHISE_CODES.includes(code), {
+    message: 'Invalid IPL franchise selection'
+  }),
+  visibility: z.nativeEnum(RoomVisibility).default(RoomVisibility.PUBLIC),
+  auctionMode: z.nativeEnum(AuctionMode).default(AuctionMode.MEGA),
+  seasonMonthLabel: z.string().trim().min(2).max(48).optional(),
+  seasonMonthKey: z.string().trim().regex(/^\d{4}-\d{2}$/, 'Month key must be YYYY-MM').optional(),
+  settings: roomSettingsSchema.default({})
+});
+
+export const claimSeasonFranchiseSchema = z.object({
+  franchiseCode: z.string().refine((code) => FRANCHISE_CODES.includes(code), {
+    message: 'Invalid IPL franchise selection'
+  }),
+  customSuffix: z.union([customSuffixSchema, z.null()]).optional(),
+  displayName: displayNameSchema.optional(),
+  recoveryCode: z.string().trim().min(4).max(32).optional()
+});
+
+export const seasonPointAdjustmentSchema = z.object({
+  entryId: z.string().uuid('Invalid season franchise entry ID'),
+  pointsDelta: z
+    .number()
+    .int('Points adjustment must be an integer')
+    .min(-1000, 'Minimum single adjustment is -1000 points')
+    .max(1000, 'Maximum single adjustment is +1000 points')
+    .refine((val) => val !== 0, 'Points adjustment cannot be zero'),
+  reason: z
+    .string()
+    .trim()
+    .min(3, 'A reason is required for manual point adjustments')
+    .max(200, 'Reason cannot exceed 200 characters'),
+  roomId: z.string().uuid().optional().nullable(),
+  monthKey: z.string().trim().regex(/^\d{4}-\d{2}$/).optional().nullable()
+});
+
+export const chatSendSchema = z.object({
+  message: z
+    .string()
+    .trim()
+    .min(1, 'Message cannot be empty')
+    .max(360, 'Chat message cannot exceed 360 characters'),
+  idempotencyKey: z.string().trim().min(6).max(128).optional()
+});
+
+export const chatModerationSettingsSchema = z
+  .object({
+    chatEnabled: z.boolean().optional(),
+    spectatorChatEnabled: z.boolean().optional()
+  })
+  .refine((d) => d.chatEnabled !== undefined || d.spectatorChatEnabled !== undefined, {
+    message: 'Provide at least one chat setting to update'
+  });
+
+export const chatMuteParticipantSchema = z.object({
+  muted: z.boolean()
 });

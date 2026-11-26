@@ -4,6 +4,7 @@ import { rateLimit } from '../../middleware/rateLimit';
 import { RoomController } from './roomController';
 import auctionRoutes from '../auction/auctionRoutes';
 import tradeRoutes from '../trades/tradeRoutes';
+import chatRoutes from '../chat/chatRoutes';
 
 const router = Router();
 
@@ -46,5 +47,8 @@ router.use('/:code/auction', auctionRoutes);
 
 // Phase 6D: Franchise Player Trading System
 router.use('/:code/trades', tradeRoutes);
+
+// Phase 7: Multiplayer Room Chat & Moderation
+router.use('/:code/chat', chatRoutes);
 
 export default router;

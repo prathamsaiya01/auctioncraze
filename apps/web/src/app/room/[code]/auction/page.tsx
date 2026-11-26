@@ -20,7 +20,19 @@ import {
 } from '@auctioncraze/shared';
 import { api } from '@/lib/api';
 import { formatCricketStyle, formatLakhs } from '@/lib/formatPrice';
-import { playBidChime, playSoldGavel, playUnsoldTone } from '@/lib/audioEffects';
+import {
+  loadAudioPrefs,
+  playAuctionPaused,
+  playAuctionResumed,
+  playBidReceived,
+  playNewHighestBid,
+  playNewPlayerIntro,
+  playSoldGavel,
+  playTimerExtended,
+  playUnsoldTone,
+  saveAudioPrefs,
+  unlockAudioContext
+} from '@/lib/audioEffects';
 import { getRoomSocket } from '@/lib/socket';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Badge } from '@/components/ui/Badge';
@@ -33,6 +45,8 @@ import { SquadIntelligencePanel } from '@/components/room/SquadIntelligencePanel
 import { TradeCentreModal } from '@/components/room/TradeCentreModal';
 import { FranchiseNicknameEditor } from '@/components/room/FranchiseNicknameEditor';
 import { CountdownRing } from '@/components/room/CountdownRing';
+import { BroadcastCue, BroadcastCueBanner } from '@/components/room/BroadcastCueBanner';
+import { RoomChatPanel } from '@/components/room/RoomChatPanel';
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -176,17 +190,63 @@ export default function LiveAuctionPage() {
 
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(0.65);
+  const [manualReducedMotion, setManualReducedMotion] = useState(false);
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [broadcastCue, setBroadcastCue] = useState<BroadcastCue | null>(null);
 
   // Server-authoritative timer offset (`serverTimeMs - Date.now()`)
   const clockOffsetRef = useRef<number>(0);
   const soundPrefsRef = useRef({ isMuted: false, volume: 0.65 });
   const myFranchiseIdRef = useRef<string | null>(null);
   const fetchSnapshotRef = useRef<() => Promise<void>>(async () => {});
+  const playedAudioKeysRef = useRef<Set<string>>(new Set());
+  const cueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isReducedMotion = Boolean(prefersReducedMotion || manualReducedMotion);
+
+  const playAudioOnce = useCallback((eventKey: string, playFn: () => void) => {
+    if (!eventKey) return;
+    if (playedAudioKeysRef.current.has(eventKey)) return;
+    playedAudioKeysRef.current.add(eventKey);
+    if (playedAudioKeysRef.current.size > 350) {
+      const first = playedAudioKeysRef.current.values().next().value;
+      if (first) playedAudioKeysRef.current.delete(first);
+    }
+    playFn();
+  }, []);
+
+  const triggerCue = useCallback((cue: BroadcastCue, durationMs = 3200) => {
+    setBroadcastCue(cue);
+    if (cueTimerRef.current) clearTimeout(cueTimerRef.current);
+    cueTimerRef.current = setTimeout(() => {
+      setBroadcastCue((prev) => (prev?.id === cue.id ? null : prev));
+    }, durationMs);
+  }, []);
+
+  useEffect(() => {
+    const saved = loadAudioPrefs();
+    setIsMuted(saved.isMuted);
+    setVolume(saved.volume);
+    setManualReducedMotion(saved.reducedMotion);
+    setPrefsLoaded(true);
+
+    const onGesture = () => unlockAudioContext();
+    window.addEventListener('pointerdown', onGesture, { once: true });
+    window.addEventListener('keydown', onGesture, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', onGesture);
+      window.removeEventListener('keydown', onGesture);
+      if (cueTimerRef.current) clearTimeout(cueTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     soundPrefsRef.current = { isMuted, volume };
-  }, [isMuted, volume]);
+    if (prefsLoaded) {
+      saveAudioPrefs({ isMuted, volume, reducedMotion: manualReducedMotion });
+    }
+  }, [isMuted, volume, manualReducedMotion, prefsLoaded]);
 
   const pushFeed = useCallback((text: string, tone: FeedEvent['tone'] = 'electric') => {
     setFeed((prev) => [
@@ -354,6 +414,15 @@ export default function LiveAuctionPage() {
         };
       });
       if (evt?.currentLot?.player?.fullName) {
+        playAudioOnce(`intro:${evt.currentLot.id}`, () =>
+          playNewPlayerIntro(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume)
+        );
+        triggerCue({
+          id: `cue-lot-${evt.currentLot.id}`,
+          kind: 'NEW_LOT',
+          playerName: evt.currentLot.player.fullName,
+          subtitle: `Lot #${evt.currentLot.sequenceOrder} • ${evt.currentLot.setCategory}`
+        });
         pushFeed(
           `Lot #${evt.currentLot.sequenceOrder} on stage: ${evt.currentLot.player.fullName} (Base ${formatLakhs(evt.currentLot.basePriceLakhs)})`,
           'electric'
@@ -367,9 +436,13 @@ export default function LiveAuctionPage() {
       const bid: AuctionBidDto | undefined = evt?.bid;
       if (!bid) return;
 
+      let shouldTriggerEffects = false;
       setAuction((prev) => {
         if (!prev || !prev.currentLot || prev.currentLot.id !== evt.lotId) return prev;
         const alreadyPresent = prev.currentLot.bids.some((b) => b.id === bid.id);
+        if (!alreadyPresent) {
+          shouldTriggerEffects = true;
+        }
         const nextBids = alreadyPresent
           ? prev.currentLot.bids
           : [bid, ...prev.currentLot.bids];
@@ -400,11 +473,31 @@ export default function LiveAuctionPage() {
         };
       });
 
-      playBidChime(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
-      pushFeed(
-        `${bid.franchiseDisplayName || bid.franchiseCode} (${bid.bidderDisplayName}) bids ${formatLakhs(bid.bidAmountLakhs)}`,
-        'gold'
-      );
+      playAudioOnce(`bid:${bid.id}`, () => {
+        if (bid.franchiseId === myFranchiseIdRef.current) {
+          playNewHighestBid(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
+        } else {
+          playBidReceived(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
+        }
+      });
+      triggerCue({
+        id: `cue-bid-${bid.id}`,
+        kind: 'BID',
+        franchiseCode: bid.franchiseCode,
+        franchiseDisplayName:
+          evt.winningFranchiseDisplayName ?? bid.franchiseDisplayName ?? evt.winningFranchiseName ?? bid.franchiseCode,
+        franchiseColor: bid.franchiseColor || '#D4AF37',
+        amountLakhs: bid.bidAmountLakhs,
+        previousBidLakhs: typeof evt.previousBidLakhs === 'number' ? evt.previousBidLakhs : undefined,
+        subtitle: `${bid.bidderDisplayName} placed a bid`
+      });
+      if (shouldTriggerEffects || !playedAudioKeysRef.current.has(`feed:${bid.id}`)) {
+        playedAudioKeysRef.current.add(`feed:${bid.id}`);
+        pushFeed(
+          `${bid.franchiseDisplayName || bid.franchiseCode} (${bid.bidderDisplayName}) bids ${formatLakhs(bid.bidAmountLakhs)}`,
+          'gold'
+        );
+      }
     };
 
     const onBidRejected = (evt: any) => {
@@ -412,7 +505,7 @@ export default function LiveAuctionPage() {
       setActionError(evt?.message || 'Bid was rejected by the auction server.');
     };
 
-    const onTimerUpdated = (timer: AuctionTimerDto) => {
+    const onTimerUpdated = (timer: AuctionTimerDto & { extended?: boolean; extraSeconds?: number }) => {
       syncClock(timer.serverTimeMs);
       setAuction((prev) => {
         if (!prev) return prev;
@@ -421,6 +514,16 @@ export default function LiveAuctionPage() {
           timer
         };
       });
+      if (timer.extended && timer.deadlineMs) {
+        playAudioOnce(`ext:${timer.lotId || 'lot'}:${timer.deadlineMs}`, () =>
+          playTimerExtended(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume)
+        );
+        triggerCue({
+          id: `cue-ext-${timer.lotId || 'lot'}-${timer.deadlineMs}`,
+          kind: 'EXTENDED',
+          subtitle: timer.extraSeconds ? `Added +${timer.extraSeconds}s` : 'Countdown extended on late bid'
+        }, 2400);
+      }
     };
 
     const onBiddingClosed = (evt: any) => {
@@ -444,18 +547,36 @@ export default function LiveAuctionPage() {
       pushFeed('Countdown expired — bidding closed. Waiting for host verdict.', 'gold');
     };
 
-    const onAuctionPaused = () => {
+    const onAuctionPaused = (evt: any) => {
       setAuction((prev) => (prev ? { ...prev, isPaused: true, auctionStage: 'PAUSED' } : prev));
+      playAudioOnce(`paused:${evt?.lotId || 'room'}:${evt?.pausedAt || ''}`, () =>
+        playAuctionPaused(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume)
+      );
+      triggerCue({
+        id: `cue-paused-${Date.now()}`,
+        kind: 'PAUSED',
+        subtitle: 'Countdown frozen until host resumes'
+      });
       pushFeed('Host paused the auction floor.', 'gold');
     };
 
-    const onAuctionResumed = () => {
+    const onAuctionResumed = (evt: any) => {
       setAuction((prev) => (prev ? { ...prev, isPaused: false, auctionStage: 'LIVE' } : prev));
+      playAudioOnce(`resumed:${evt?.lotId || 'room'}:${evt?.deadlineMs || ''}`, () =>
+        playAuctionResumed(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume)
+      );
+      triggerCue({
+        id: `cue-resumed-${Date.now()}`,
+        kind: 'RESUMED',
+        subtitle: 'Countdown live — bidding paddles active'
+      });
       pushFeed('Auction resumed by host.', 'electric');
     };
 
     const onPlayerSold = (evt: any) => {
-      playSoldGavel(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
+      playAudioOnce(`sold:${evt.lotId}`, () =>
+        playSoldGavel(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume)
+      );
       setSettlementOverlay({
         type: 'SOLD',
         playerName: evt.playerName,
@@ -502,7 +623,9 @@ export default function LiveAuctionPage() {
     };
 
     const onPlayerUnsold = (evt: any) => {
-      playUnsoldTone(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
+      playAudioOnce(`unsold:${evt.lotId}`, () =>
+        playUnsoldTone(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume)
+      );
       setSettlementOverlay({
         type: 'UNSOLD',
         playerName: evt.playerName,
@@ -720,7 +843,7 @@ export default function LiveAuctionPage() {
         window.removeEventListener('offline', onOffline);
       }
     };
-  }, [token, roomCode, syncClock, pushFeed]);
+  }, [token, roomCode, syncClock, pushFeed, playAudioOnce, triggerCue]);
 
   const myParticipant = useMemo(() => {
     if (!auction || !session) return null;
@@ -943,6 +1066,15 @@ export default function LiveAuctionPage() {
                   <Radio className="w-3 h-3" />
                   {auction.auctionStage.replace(/_/g, ' ')}
                 </Badge>
+                {auction.seasonCode && (
+                  <Link
+                    href={`/seasons/${auction.seasonCode}`}
+                    className="inline-flex items-center gap-1 font-mono text-[11px] px-2 py-0.5 rounded-md bg-electric-500/15 text-electric-300 border border-electric-400/35 hover:border-electric-300"
+                    data-testid="auction-season-link"
+                  >
+                    {auction.seasonName || auction.seasonCode}
+                  </Link>
+                )}
               </div>
             </div>
           </div>
@@ -976,11 +1108,12 @@ export default function LiveAuctionPage() {
               </Badge>
             )}
 
-            {/* Sound Controls */}
+            {/* Sound & Reduced Motion Controls */}
             <div className="hidden sm:flex items-center gap-2 rounded-xl border border-stadium-border bg-stadium-surface px-2.5 py-1.5">
               <button
                 type="button"
                 onClick={() => setIsMuted((m) => !m)}
+                data-testid="audio-mute-toggle"
                 aria-label={isMuted ? 'Unmute auction sounds' : 'Mute auction sounds'}
                 className="text-stadium-muted hover:text-white transition-colors"
               >
@@ -997,9 +1130,22 @@ export default function LiveAuctionPage() {
                   setVolume(val);
                   if (val > 0 && isMuted) setIsMuted(false);
                 }}
+                data-testid="audio-volume-slider"
                 aria-label="Audio effects volume"
                 className="w-16 accent-gold-500 cursor-pointer"
               />
+              <button
+                type="button"
+                onClick={() => setManualReducedMotion((v) => !v)}
+                data-testid="reduced-motion-toggle"
+                title={isReducedMotion ? 'Reduced motion active (click to restore full animations)' : 'Enable reduced motion'}
+                aria-label="Toggle reduced motion"
+                className={`pl-2 border-l border-stadium-border text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                  isReducedMotion ? 'text-electric-300' : 'text-stadium-muted hover:text-white'
+                }`}
+              >
+                {isReducedMotion ? 'Motion: Min' : 'FX'}
+              </button>
             </div>
 
             <button
@@ -1274,14 +1420,20 @@ export default function LiveAuctionPage() {
                             </div>
                           </div>
 
-                          <div className="text-right shrink-0">
+                          <motion.div
+                            key={`${f.id}-${f.remainingPurseLakhs}-${f.squadCount}`}
+                            initial={isReducedMotion ? false : { scale: 1.06 }}
+                            animate={{ scale: 1 }}
+                            transition={{ duration: isReducedMotion ? 0 : 0.22 }}
+                            className="text-right shrink-0"
+                          >
                             <p className="font-mono text-xs font-bold text-white">
                               {formatLakhs(f.remainingPurseLakhs)}
                             </p>
                             <p className="text-[10px] font-mono text-stadium-muted">
                               {f.squadCount}/{auction.settings.maxSquadSize} • OS {f.overseasCount}/{auction.settings.maxOverseas}
                             </p>
-                          </div>
+                          </motion.div>
                         </div>
                       </button>
                     );
@@ -1290,8 +1442,10 @@ export default function LiveAuctionPage() {
               </Card>
             </aside>
 
-            {/* CENTER STAGE: Spotlight + Timer + Bid Deck + Host Controls */}
+            {/* CENTER STAGE: Broadcast Cue + Spotlight + Timer + Bid Deck + Host Controls */}
             <section className="xl:col-span-6 space-y-5 order-1 xl:order-2">
+              <BroadcastCueBanner cue={broadcastCue} reducedMotion={isReducedMotion} />
+
               {currentLot ? (
                 <Card
                   highlight="gold"
@@ -1302,13 +1456,13 @@ export default function LiveAuctionPage() {
                     {settlementOverlay && (
                       <motion.div
                         data-testid="settlement-overlay"
-                        initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.92 }}
+                        initial={isReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.92 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0 }}
-                        transition={{ duration: prefersReducedMotion ? 0 : 0.25 }}
+                        transition={{ duration: isReducedMotion ? 0 : 0.25 }}
                         className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-stadium-bg/92 backdrop-blur-md p-6 text-center"
                       >
-                        {settlementOverlay.type === 'SOLD' && !prefersReducedMotion && (
+                        {settlementOverlay.type === 'SOLD' && !isReducedMotion && (
                           <div className="pointer-events-none absolute inset-0 overflow-hidden flex items-center justify-center">
                             {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
                               <motion.span
@@ -1414,12 +1568,18 @@ export default function LiveAuctionPage() {
                       auctionStage={auction.auctionStage}
                       clockOffsetRef={clockOffsetRef}
                       soundPrefsRef={soundPrefsRef}
-                      prefersReducedMotion={prefersReducedMotion}
+                      prefersReducedMotion={isReducedMotion}
                     />
                   </div>
 
-                  {/* Player Spotlight Core */}
-                  <div className="flex flex-col sm:flex-row gap-5 items-center sm:items-stretch">
+                  {/* Player Spotlight Core (Animated Player Walk-In) */}
+                  <motion.div
+                    key={currentLot.id}
+                    initial={isReducedMotion ? false : { opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: isReducedMotion ? 0 : 0.25 }}
+                    className="flex flex-col sm:flex-row gap-5 items-center sm:items-stretch"
+                  >
                     {/* Portrait / Broadcast Crest */}
                     <div className="w-36 h-44 rounded-2xl border border-gold-500/35 bg-gradient-to-b from-stadium-card to-stadium-bg flex flex-col items-center justify-center overflow-hidden shrink-0 shadow-stage relative">
                       {currentLot.player.imageUrl && imageFailedLotId !== currentLot.id ? (
@@ -1513,7 +1673,13 @@ export default function LiveAuctionPage() {
                       )}
 
                       {/* Current High Bid Box */}
-                      <div className="rounded-2xl border border-gold-500/35 bg-gradient-to-r from-stadium-card via-stadium-card to-gold-500/10 p-4 flex flex-wrap items-center justify-between gap-4">
+                      <motion.div
+                        key={`${currentLot.id}-${currentLot.currentBidLakhs}-${currentLot.winningFranchiseId || 'none'}`}
+                        initial={isReducedMotion ? false : { scale: 0.985 }}
+                        animate={{ scale: 1 }}
+                        transition={{ duration: isReducedMotion ? 0 : 0.2 }}
+                        className="rounded-2xl border border-gold-500/35 bg-gradient-to-r from-stadium-card via-stadium-card to-gold-500/10 p-4 flex flex-wrap items-center justify-between gap-4"
+                      >
                         <div>
                           <p className="text-[11px] uppercase tracking-wider text-stadium-muted font-semibold">
                             {currentLot.winningFranchiseId ? 'Current Highest Bid' : 'Opening Base Bid'}
@@ -1553,9 +1719,9 @@ export default function LiveAuctionPage() {
                             </p>
                           </div>
                         )}
-                      </div>
+                      </motion.div>
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* Recent Bid History Strip */}
                   {currentLot.bids.length > 0 && (
@@ -2208,6 +2374,17 @@ export default function LiveAuctionPage() {
           onTradeChanged={() => {
             fetchAuctionSnapshot();
           }}
+        />
+      )}
+
+      {token && session && (
+        <RoomChatPanel
+          roomCode={auction.roomCode}
+          token={token}
+          mySessionId={session.id}
+          myRole={myParticipant?.role || null}
+          isHost={isHost}
+          participants={auction.participants}
         />
       )}
     </main>

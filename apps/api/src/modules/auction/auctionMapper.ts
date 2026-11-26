@@ -17,6 +17,7 @@ import {
 import { resolveBidTiers } from '../rooms/roomMapper';
 
 export const AUCTION_ROOM_INCLUDE = {
+  season: { select: { code: true, name: true } },
   franchises: {
     include: {
       purchases: {
@@ -360,11 +361,17 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
       franchiseCode: p.franchiseId ? franchiseById.get(p.franchiseId)?.presetCode || null : null,
       isReady: p.isReady,
       isConnected: p.isConnected,
+      isChatMuted: !!p.isChatMuted,
       joinedAt: p.joinedAt.toISOString()
     })),
     upNextLots,
     recentResults,
     allBids,
+    chatEnabled: room.chatEnabled ?? true,
+    spectatorChatEnabled: room.spectatorChatEnabled ?? false,
+    seasonCode: room.season?.code ?? null,
+    seasonName: room.season?.name ?? null,
+    seasonMonthLabel: room.seasonMonthLabel ?? null,
     serverTimeMs: nowMs
   };
 }

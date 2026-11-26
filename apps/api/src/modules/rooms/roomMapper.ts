@@ -226,6 +226,7 @@ export function mapRoomToDetailDto(room: any, includeInviteToken = false): RoomD
       franchiseCode: p.franchiseId ? franchiseById.get(p.franchiseId)?.presetCode || null : null,
       isReady: p.isReady,
       isConnected: p.isConnected,
+      isChatMuted: !!p.isChatMuted,
       joinedAt: p.joinedAt.toISOString()
     })),
     lots: (room.lots || []).map((l: any) => ({
@@ -254,6 +255,11 @@ export function mapRoomToDetailDto(room: any, includeInviteToken = false): RoomD
     })),
     readiness: evaluateRoomReadiness(room),
     spectatorCount: activeParticipants.filter((p: any) => p.role === DbRoomRole.SPECTATOR).length,
+    chatEnabled: room.chatEnabled ?? true,
+    spectatorChatEnabled: room.spectatorChatEnabled ?? false,
+    seasonCode: room.season?.code ?? null,
+    seasonName: room.season?.name ?? null,
+    seasonMonthLabel: room.seasonMonthLabel ?? null,
     createdAt: room.createdAt.toISOString()
   };
 }

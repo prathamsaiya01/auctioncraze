@@ -5,6 +5,7 @@ import {
   RoomRole,
   RoomStatus,
   RoomVisibility,
+  SeasonStatus,
   TradeDirection,
   TradeStatus
 } from './enums';
@@ -45,6 +46,7 @@ export interface RoomParticipantDto {
   franchiseCode: string | null;
   isReady: boolean;
   isConnected: boolean;
+  isChatMuted?: boolean;
   joinedAt: string;
 }
 
@@ -153,6 +155,11 @@ export interface RoomDetailDto {
   retentions: RoomRetentionDto[];
   readiness: AuctionReadinessDto;
   spectatorCount: number;
+  chatEnabled?: boolean;
+  spectatorChatEnabled?: boolean;
+  seasonCode?: string | null;
+  seasonName?: string | null;
+  seasonMonthLabel?: string | null;
   createdAt: string;
 }
 
@@ -306,6 +313,11 @@ export interface AuctionStateSnapshotDto {
   upNextLots: RoomPlayerLotDto[];
   recentResults: AuctionResultItemDto[];
   allBids: AuctionBidDto[];
+  chatEnabled?: boolean;
+  spectatorChatEnabled?: boolean;
+  seasonCode?: string | null;
+  seasonName?: string | null;
+  seasonMonthLabel?: string | null;
   serverTimeMs: number;
 }
 
@@ -474,4 +486,107 @@ export interface TradeCenterStateDto {
   pendingIncoming: TradeProposalDto[];
   pendingOutgoing: TradeProposalDto[];
   history: TradeProposalDto[];
+}
+
+// -------------------------------------------------------------
+// PHASE 7: SEASON MANAGEMENT, LEADERBOARD & CHAT CONTRACTS
+// -------------------------------------------------------------
+
+export interface ChatMessageDto {
+  id: string;
+  roomId: string;
+  roomCode?: string;
+  participantId: string | null;
+  guestSessionId: string;
+  senderName: string;
+  senderRole: RoomRole | string;
+  franchiseCode: string | null;
+  franchiseDisplayName: string | null;
+  message: string;
+  createdAt: string;
+}
+
+export interface RoomChatStateDto {
+  roomCode: string;
+  chatEnabled: boolean;
+  spectatorChatEnabled: boolean;
+  isMuted: boolean;
+  messages: ChatMessageDto[];
+}
+
+export interface SeasonAuctionSummaryDto {
+  id: string;
+  code: string;
+  name: string;
+  status: RoomStatus;
+  auctionMode: AuctionMode;
+  seasonMonthLabel: string | null;
+  seasonMonthKey: string | null;
+  occupiedFranchises: number;
+  createdAt: string;
+}
+
+export interface SeasonPointLedgerDto {
+  id: string;
+  entryId: string;
+  presetCode: string;
+  franchiseName: string;
+  franchiseDisplayName: string;
+  roomId: string | null;
+  roomCode: string | null;
+  roomName: string | null;
+  monthKey: string | null;
+  pointsDelta: number;
+  balanceAfter: number;
+  reason: string;
+  adjustedByName: string;
+  createdAt: string;
+}
+
+export interface SeasonFranchiseLeaderboardRowDto {
+  entryId: string;
+  rank: number;
+  rankMovement: number; // +N = moved up, -N = moved down, 0 = unchanged
+  presetCode: string;
+  name: string;
+  customSuffix: string | null;
+  displayName: string;
+  abbreviation: string;
+  primaryColor: string;
+  secondaryColor: string;
+  isClaimedInSeason: boolean;
+  isOwnedByRequester: boolean;
+  controllerDisplayName: string | null;
+  totalPoints: number;
+  filteredPoints: number;
+  auctionsParticipated: number;
+  pointsByAuction: Array<{
+    roomId: string | null;
+    roomCode: string | null;
+    roomName: string | null;
+    monthKey: string | null;
+    points: number;
+  }>;
+}
+
+export interface SeasonSummaryDto {
+  id: string;
+  code: string;
+  name: string;
+  year: number;
+  description: string | null;
+  status: SeasonStatus;
+  auctionCount: number;
+  claimedFranchisesCount: number;
+  startDate: string | null;
+  endDate: string | null;
+  createdAt: string;
+}
+
+export interface SeasonDetailDto extends SeasonSummaryDto {
+  isHost: boolean;
+  leaderboard: SeasonFranchiseLeaderboardRowDto[];
+  auctions: SeasonAuctionSummaryDto[];
+  availableMonths: string[];
+  pointHistory: SeasonPointLedgerDto[];
 }

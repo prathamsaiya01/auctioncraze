@@ -3,7 +3,7 @@ import { Server, Socket } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import Redis from 'ioredis';
 import { prisma, RoomStatus as DbRoomStatus } from '@auctioncraze/database';
-import { placeBidSchema, SOCKET_EVENTS, SOCKET_ROOMS } from '@auctioncraze/shared';
+import { chatSendSchema, placeBidSchema, SOCKET_EVENTS, SOCKET_ROOMS } from '@auctioncraze/shared';
 import { config } from '../config/env';
 import { verifyGuestToken } from '../middleware/auth';
 import { redis } from '../lib/redis';
@@ -11,6 +11,7 @@ import { mapRoomToDetailDto } from '../modules/rooms/roomMapper';
 import { ROOM_RELATIONS_INCLUDE } from '../modules/rooms/roomHelpers';
 import { AUCTION_ROOM_INCLUDE, mapAuctionStateSnapshot } from '../modules/auction/auctionMapper';
 import { AuctionService } from '../modules/auction/auctionService';
+import { ChatService } from '../modules/chat/chatService';
 
 export interface AuthenticatedSocket extends Socket {
   guestSession?: {
@@ -350,6 +351,68 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
           };
           socket.emit(SOCKET_EVENTS.BID_REJECTED, errPayload);
           ack?.(errPayload);
+        }
+      }
+    );
+
+    socket.on(
+      SOCKET_EVENTS.CHAT_SEND,
+      async (
+        payload: { roomCode?: string; message?: string; idempotencyKey?: string },
+        ack?: (res: Record<string, unknown>) => void
+      ) => {
+        try {
+          const roomCode = payload?.roomCode?.trim().toUpperCase();
+          if (!roomCode || !socket.joinedRooms?.has(roomCode)) {
+            ack?.({
+              ok: false,
+              code: 'NOT_A_MEMBER',
+              message: 'Join the room before sending chat messages.'
+            });
+            return;
+          }
+          const parsed = chatSendSchema.parse({
+            message: payload?.message,
+            idempotencyKey: payload?.idempotencyKey
+          });
+          const msgDto = await ChatService.sendMessage({
+            roomCode,
+            guestSessionId: socket.guestSession!.id,
+            rawMessage: parsed.message,
+            idempotencyKey: parsed.idempotencyKey
+          });
+          ack?.({ ok: true, data: msgDto });
+        } catch (err: any) {
+          ack?.({
+            ok: false,
+            code: err?.code || 'CHAT_REJECTED',
+            message: err?.message || 'Unable to send chat message.'
+          });
+        }
+      }
+    );
+
+    socket.on(
+      SOCKET_EVENTS.SEASON_JOIN,
+      async (payload: { seasonCode?: string }, ack?: (res: Record<string, unknown>) => void) => {
+        try {
+          const seasonCode = payload?.seasonCode?.trim().toUpperCase();
+          if (!seasonCode) {
+            ack?.({ ok: false, code: 'INVALID_SEASON_CODE', message: 'Season code is required.' });
+            return;
+          }
+          const exists = await prisma.season.findUnique({
+            where: { code: seasonCode },
+            select: { id: true }
+          });
+          if (!exists) {
+            ack?.({ ok: false, code: 'SEASON_NOT_FOUND', message: 'Season not found.' });
+            return;
+          }
+          await socket.join(SOCKET_ROOMS.season(seasonCode));
+          ack?.({ ok: true, seasonCode });
+        } catch (err: any) {
+          ack?.({ ok: false, code: 'SEASON_JOIN_FAILED', message: err?.message || 'Unable to subscribe to season.' });
         }
       }
     );

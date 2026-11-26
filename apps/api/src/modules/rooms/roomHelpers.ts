@@ -2,6 +2,7 @@ import { Prisma, prisma } from '@auctioncraze/database';
 import { AppError } from '../../middleware/errorHandler';
 
 export const ROOM_RELATIONS_INCLUDE = {
+  season: { select: { code: true, name: true } },
   franchises: { orderBy: { presetCode: 'asc' } },
   participants: { orderBy: { joinedAt: 'asc' } },
   lots: {

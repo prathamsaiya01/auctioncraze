@@ -52,9 +52,14 @@ export const SOCKET_EVENTS = {
   TRADE_CANCELLED: 'TRADE_CANCELLED',
   TRADE_EXPIRED: 'TRADE_EXPIRED',
 
-  // Social
+  // Social & Phase 7 Chat + Seasons
   CHAT_SEND: 'chat:send',
   CHAT_MESSAGE: 'chat:message',
+  CHAT_MESSAGE_DELETED: 'chat:message_deleted',
+  CHAT_SETTINGS_UPDATED: 'chat:settings_updated',
+  CHAT_PARTICIPANT_MUTED: 'chat:participant_muted',
+  SEASON_JOIN: 'season:join',
+  SEASON_LEADERBOARD_UPDATED: 'season:leaderboard_updated',
   REACTION_SEND: 'reaction:send',
   REACTION_BROADCAST: 'reaction:broadcast',
 
@@ -64,7 +69,8 @@ export const SOCKET_EVENTS = {
 
 export const SOCKET_ROOMS = {
   room: (roomCode: string) => `room:${roomCode.toUpperCase()}`,
-  participant: (participantId: string) => `participant:${participantId}`
+  participant: (participantId: string) => `participant:${participantId}`,
+  season: (seasonCode: string) => `season:${seasonCode.toUpperCase()}`
 } as const;
 
 export interface BidTierConfig {

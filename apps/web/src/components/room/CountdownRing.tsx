@@ -50,7 +50,7 @@ export const CountdownRing = React.memo(function CountdownRing({
         const ceilSec = Math.ceil(diffSec);
         if (ceilSec >= 1 && ceilSec <= 3 && lastTickSecRef.current !== ceilSec) {
           lastTickSecRef.current = ceilSec;
-          playCountdownTick(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
+          playCountdownTick(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume, ceilSec);
         } else if (ceilSec > 3 || ceilSec <= 0) {
           lastTickSecRef.current = null;
         }
