@@ -29,6 +29,7 @@ import { Card } from '@/components/ui/Card';
 import { FranchiseEmblem } from '@/components/ui/FranchiseEmblem';
 import { Modal } from '@/components/ui/Modal';
 import { PlayerProfileModal } from '@/components/players/PlayerProfileModal';
+import { SquadIntelligencePanel } from '@/components/room/SquadIntelligencePanel';
 import {
   ArrowLeft,
   Award,
@@ -159,6 +160,7 @@ export default function LiveAuctionPage() {
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [settlementOverlay, setSettlementOverlay] = useState<SettlementOverlayState | null>(null);
   const [inspectedFranchiseId, setInspectedFranchiseId] = useState<string | null>(null);
+  const [squadTab, setSquadTab] = useState<'ROSTER' | 'STRENGTH' | 'PLAYING_XI'>('ROSTER');
   const [inspectedPlayerId, setInspectedPlayerId] = useState<string | null>(null);
   const [imageFailedLotId, setImageFailedLotId] = useState<string | null>(null);
   const [sideTab, setSideTab] = useState<'QUEUE' | 'BIDS' | 'RESULTS' | 'FEED'>('QUEUE');
@@ -658,6 +660,14 @@ export default function LiveAuctionPage() {
     return auction.franchises.find((f) => f.id === inspectedFranchiseId) || null;
   }, [auction, inspectedFranchiseId]);
 
+  const isActiveOwner = Boolean(
+    myFranchise && myParticipant && myParticipant.role !== RoomRole.SPECTATOR
+  );
+
+  const isOwnInspectedFranchise = Boolean(
+    isActiveOwner && inspectedFranchise && myFranchise && inspectedFranchise.id === myFranchise.id
+  );
+
   const bidCheck = useMemo(() => {
     if (!auction || !auction.currentLot) {
       return { canBid: false, reason: 'No active player lot on stage.' };
@@ -824,6 +834,17 @@ export default function LiveAuctionPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {isActiveOwner && (
+              <Link
+                href={`/intelligence?roomCode=${encodeURIComponent(roomCode)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button variant="electric" size="sm" data-testid="nav-owner-intelligence-btn">
+                  Owner Intelligence
+                </Button>
+              </Link>
+            )}
             {isHost && (
               <Badge tone="gold" className="hidden md:inline-flex">
                 <Crown className="w-3 h-3" /> Host + Owner
@@ -991,7 +1012,10 @@ export default function LiveAuctionPage() {
                       <button
                         key={f.id}
                         type="button"
-                        onClick={() => setInspectedFranchiseId(f.id)}
+                        onClick={() => {
+                          setSquadTab('ROSTER');
+                          setInspectedFranchiseId(f.id);
+                        }}
                         data-testid={`franchise-purse-${f.presetCode}`}
                         className={`w-full text-left rounded-xl border p-3 transition-all ${
                           isWinning
@@ -1843,7 +1867,10 @@ export default function LiveAuctionPage() {
       {/* Squad Inspector Modal */}
       <Modal
         open={Boolean(inspectedFranchise)}
-        onClose={() => setInspectedFranchiseId(null)}
+        onClose={() => {
+          setInspectedFranchiseId(null);
+          setSquadTab('ROSTER');
+        }}
         title={inspectedFranchise ? `${inspectedFranchise.name} (${inspectedFranchise.presetCode})` : ''}
         subtitle={
           inspectedFranchise
@@ -1852,8 +1879,63 @@ export default function LiveAuctionPage() {
         }
       >
         {inspectedFranchise && (
-          <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1" data-testid="squad-inspector-modal">
-            {inspectedFranchise.squad.length === 0 ? (
+          <div className="space-y-3.5 max-h-[65vh] overflow-y-auto pr-1" data-testid="squad-inspector-modal">
+            <div className="flex flex-wrap items-center gap-2 border-b border-stadium-border pb-2.5">
+              <button
+                type="button"
+                data-testid="tab-squad-roster"
+                onClick={() => setSquadTab('ROSTER')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  squadTab === 'ROSTER'
+                    ? 'bg-gold-500 text-stadium-bg'
+                    : 'bg-stadium-card text-stadium-muted hover:text-white border border-stadium-border'
+                }`}
+              >
+                Roster ({inspectedFranchise.squad.length})
+              </button>
+              {isOwnInspectedFranchise && (
+                <>
+                  <button
+                    type="button"
+                    data-testid="tab-squad-strength"
+                    onClick={() => setSquadTab('STRENGTH')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      squadTab === 'STRENGTH'
+                        ? 'bg-electric-500 text-white'
+                        : 'bg-stadium-card text-stadium-muted hover:text-white border border-stadium-border'
+                    }`}
+                  >
+                    Team Strength
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="tab-playing-xi"
+                    onClick={() => setSquadTab('PLAYING_XI')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      squadTab === 'PLAYING_XI'
+                        ? 'bg-electric-500 text-white'
+                        : 'bg-stadium-card text-stadium-muted hover:text-white border border-stadium-border'
+                    }`}
+                  >
+                    Playing XI + Impact
+                  </button>
+                </>
+              )}
+            </div>
+
+            {isOwnInspectedFranchise && squadTab === 'STRENGTH' ? (
+              <SquadIntelligencePanel
+                roomCode={roomCode}
+                franchiseId={inspectedFranchise.id}
+                mode="STRENGTH"
+              />
+            ) : isOwnInspectedFranchise && squadTab === 'PLAYING_XI' ? (
+              <SquadIntelligencePanel
+                roomCode={roomCode}
+                franchiseId={inspectedFranchise.id}
+                mode="PLAYING_XI"
+              />
+            ) : inspectedFranchise.squad.length === 0 ? (
               <p className="text-sm text-stadium-muted py-4 text-center">
                 No retained or purchased players yet.
               </p>
@@ -1890,6 +1972,8 @@ export default function LiveAuctionPage() {
       <PlayerProfileModal
         playerId={inspectedPlayerId}
         onClose={() => setInspectedPlayerId(null)}
+        intelligenceRoomCode={roomCode}
+        canViewIntelligence={isActiveOwner}
       />
     </main>
   );

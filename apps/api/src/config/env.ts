@@ -29,5 +29,6 @@ export const config = {
   jwtSecret: requireStrongSecret('JWT_SECRET', process.env.JWT_SECRET),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   guestSessionTtlSeconds: parseInt(process.env.GUEST_SESSION_TTL_SECONDS || '604800', 10),
-  mlServiceUrl: process.env.ML_SERVICE_URL || 'http://localhost:8001'
+  mlServiceUrl: process.env.ML_SERVICE_URL || 'http://localhost:8001',
+  internalMlServiceKey: requireStrongSecret('INTERNAL_ML_SERVICE_KEY', process.env.INTERNAL_ML_SERVICE_KEY)
 } as const;

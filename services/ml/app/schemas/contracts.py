@@ -44,40 +44,66 @@ class ModelVersionMetadata(BaseModel):
 
 class PlayerRatingRequest(BaseModel):
     player_id: str
+    scope: Literal["CAREER", "RECENT_3_SEASONS"] = "CAREER"
     season_context: Optional[int] = None
 
 
 class PlayerRatingResponse(BaseModel):
     player_id: str
+    external_key: str
+    full_name: str
+    playing_role: str
+    is_overseas: bool
+    nationality: Optional[str] = None
+    scope_requested: str
+    scope_used: str
     model_version: str
-    overall_rating: float
-    batting_index: float
-    bowling_index: float
-    fielding_index: float
-    phase_ratings: Dict[str, float]
+    rating_type: str
+    disclaimer: str
+    allow_bidding_advice: bool = False
+    insufficient_sample: bool
+    sample_matches: int
+    overall_rating: Optional[float] = None
+    batting_rating: Optional[float] = None
+    bowling_rating: Optional[float] = None
+    all_rounder_rating: Optional[float] = None
+    fielding_rating: Optional[float] = None
+    phase_ratings: Dict[str, Optional[float]]
+    components: Dict[str, Any]
 
 
 class SquadPlayerInput(BaseModel):
     player_id: str
-    playing_role: str
-    is_overseas: bool
+    playing_role: Optional[str] = "BATSMAN"
+    is_overseas: bool = False
 
 
 class TeamStrengthRequest(BaseModel):
     room_id: str
     franchise_code: str
     squad: List[SquadPlayerInput]
+    max_overseas_in_squad: int = 8
 
 
 class TeamStrengthResponse(BaseModel):
+    room_id: str
     franchise_code: str
     model_version: str
+    squad_size: int
     overall_strength: float
     batting_depth: float
     bowling_depth: float
     pace_spin_balance: float
     all_rounder_index: float
+    fielding_index: float
+    overseas_count: int
     overseas_compliance: bool
+    wicket_keeper_count: int
+    composition: Dict[str, int]
+    strengths: List[str]
+    gaps: List[str]
+    allow_bidding_advice: bool = False
+    disclaimer: str
 
 
 class PlayingXIRequest(BaseModel):
@@ -89,31 +115,53 @@ class PlayingXIRequest(BaseModel):
 
 
 class PlayingXIResponse(BaseModel):
+    room_id: str
     franchise_code: str
     model_version: str
+    rule_version: str
+    is_prediction: bool = True
+    prediction_label: str
+    overseas_count_in_xi: int
     playing_xi: List[str]
-    impact_player: str
+    playing_xi_details: List[Dict[str, Any]]
+    impact_player: Optional[str] = None
+    impact_player_details: Optional[Dict[str, Any]] = None
     captain_candidate: str
+    captain_name: str
     vice_captain_candidate: str
+    vice_captain_name: str
     explanation: List[str]
+    allow_bidding_advice: bool = False
+    disclaimer: str
 
 
 class MatchPredictionRequest(BaseModel):
     home_franchise_code: str
     away_franchise_code: str
-    home_xi: List[str]
-    away_xi: List[str]
-    venue: str
+    home_xi: List[str] = Field(default_factory=list)
+    away_xi: List[str] = Field(default_factory=list)
+    venue: str = "M Chinnaswamy Stadium"
     toss_winner: Optional[str] = None
     toss_decision: Optional[str] = None
 
 
 class MatchPredictionResponse(BaseModel):
+    home_franchise_code: str
+    away_franchise_code: str
+    venue: str
+    model_key: str
     model_version: str
+    selected_candidate: Optional[str] = None
+    dataset_fingerprint: Optional[str] = None
     home_win_probability: float
     away_win_probability: float
     calibrated: bool
+    is_prediction: bool = True
     key_factors: List[str]
+    feature_breakdown: Dict[str, float]
+    holdout_metrics: Optional[Dict[str, float]] = None
+    allow_bidding_advice: bool = False
+    disclaimer: str
 
 
 class PostMatchAnalysisRequest(BaseModel):

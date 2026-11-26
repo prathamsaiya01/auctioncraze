@@ -1,0 +1,117 @@
+{
+  "generatedAtUtc": "2026-11-26T06:41:57.833790+00:00",
+  "datasetFingerprint": "c9af4153629ffb06",
+  "allowBiddingAdvice": false,
+  "model": {
+    "model_key": "MATCH_PRED",
+    "version": "1.0.0",
+    "selected_candidate": "calibrated_random_forest",
+    "algorithm": "Match Outcome Classifier (calibrated_random_forest)",
+    "train_split": "2009-2021 (with 2008 causal warmup)",
+    "validation_split": "2022-2023",
+    "test_split": "2024-2026 chronological holdout",
+    "target_name": "team1_win",
+    "target_definition": "Binary match outcome (1 if team1 won completed IPL match, 0 if team2 won; NR excluded)",
+    "random_seed": 42,
+    "dataset_fingerprint": "c9af4153629ffb06",
+    "trained_at_utc": "2026-11-26T06:41:57.368073+00:00",
+    "feature_names": [
+      "elo_diff",
+      "nrr_ema_diff",
+      "cycle_form_diff",
+      "xi_sea_ovr_diff",
+      "xi_sea_bat_diff",
+      "xi_sea_bowl_diff"
+    ],
+    "sample_counts": {
+      "warmup_2008": 58,
+      "train_2009_2021": 814,
+      "validation_2022_2023": 147,
+      "holdout_2024_2026": 215
+    },
+    "validation_candidates": {
+      "logistic_l2_symmetric": {
+        "accuracy": 0.5782,
+        "precision": 0.6027,
+        "recall": 0.5714,
+        "f1": 0.5867,
+        "roc_auc": 0.5592,
+        "log_loss": 0.6901,
+        "brier_score": 0.2485,
+        "ece": 0.0523
+      },
+      "calibrated_gbdt": {
+        "accuracy": 0.5646,
+        "precision": 0.6,
+        "recall": 0.5065,
+        "f1": 0.5493,
+        "roc_auc": 0.5718,
+        "log_loss": 0.6906,
+        "brier_score": 0.2487,
+        "ece": 0.0527
+      },
+      "calibrated_random_forest": {
+        "accuracy": 0.5646,
+        "precision": 0.5867,
+        "recall": 0.5714,
+        "f1": 0.5789,
+        "roc_auc": 0.5766,
+        "log_loss": 0.6896,
+        "brier_score": 0.2482,
+        "ece": 0.0503
+      }
+    },
+    "validation_metrics": {
+      "accuracy": 0.5646,
+      "precision": 0.5867,
+      "recall": 0.5714,
+      "f1": 0.5789,
+      "roc_auc": 0.5766,
+      "log_loss": 0.6896,
+      "brier_score": 0.2482,
+      "ece": 0.0503
+    },
+    "metrics": {
+      "accuracy": 0.5395,
+      "precision": 0.4909,
+      "recall": 0.5567,
+      "f1": 0.5217,
+      "roc_auc": 0.5508,
+      "log_loss": 0.6899,
+      "brier_score": 0.2484,
+      "ece": 0.0466
+    },
+    "baseline_comparisons": {
+      "coin_flip_0.5_baseline": {
+        "accuracy": 0.4512,
+        "precision": 0.4512,
+        "recall": 1.0,
+        "f1": 0.6218,
+        "roc_auc": 0.5,
+        "log_loss": 0.6931,
+        "brier_score": 0.25,
+        "ece": 0.0488
+      },
+      "elo_rating_only_baseline": {
+        "accuracy": 0.5302,
+        "precision": 0.48,
+        "recall": 0.4948,
+        "f1": 0.4873,
+        "roc_auc": 0.5085,
+        "log_loss": 0.7014,
+        "brier_score": 0.254,
+        "ece": 0.0823
+      }
+    },
+    "top_features": [],
+    "limitations": [
+      "T20 cricket has substantial intrinsic variance (dew, toss luck, sudden batting collapses, impact subs); honest pre-match accuracy typically falls in the 54%-62% range.",
+      "Mega Auctions (2011, 2014, 2018, 2022, 2025) reset team continuity; causal Playing XI ratings capture squad turnover more reliably than historical franchise logos.",
+      "Strictly separated from auction bidding (ALLOW_BIDDING_ADVICE=False)."
+    ],
+    "is_trained": true,
+    "is_validated": true,
+    "allow_bidding_advice": false,
+    "artifact_path": "D:\\AUCTIONCRAZE\\services\\ml\\artifacts\\MATCH_PRED\\1.0.0"
+  }
+}

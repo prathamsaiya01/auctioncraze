@@ -303,17 +303,16 @@ export class RoomConfigService {
       await tx.roomPlayerLot.deleteMany({ where: { roomId: room.id } });
 
       const ordered = [...lots].sort((a, b) => a.sequenceOrder - b.sequenceOrder);
-      for (let idx = 0; idx < ordered.length; idx++) {
-        const item = ordered[idx];
-        await tx.roomPlayerLot.create({
-          data: {
+      if (ordered.length > 0) {
+        await tx.roomPlayerLot.createMany({
+          data: ordered.map((item, idx) => ({
             roomId: room.id,
             playerId: item.playerId,
             sequenceOrder: idx + 1,
             setCategory: item.setCategory.trim() || 'Marquee',
             basePriceLakhs: item.basePriceLakhs,
             status: LotStatus.QUEUED
-          }
+          }))
         });
       }
 
@@ -381,19 +380,16 @@ export class RoomConfigService {
         [CricketRole.WICKET_KEEPER]: 'Wicketkeepers'
       };
 
-      for (let i = 0; i < eligible.length; i++) {
-        const p = eligible[i];
-        await tx.roomPlayerLot.create({
-          data: {
-            roomId: room.id,
-            playerId: p.id,
-            sequenceOrder: i + 1,
-            setCategory: roleToSet[p.playingRole] || 'Pool',
-            basePriceLakhs: filters.useDefaultBasePrice ? room.defaultBasePriceLakhs : p.basePriceLakhs,
-            status: LotStatus.QUEUED
-          }
-        });
-      }
+      await tx.roomPlayerLot.createMany({
+        data: eligible.map((p, i) => ({
+          roomId: room.id,
+          playerId: p.id,
+          sequenceOrder: i + 1,
+          setCategory: roleToSet[p.playingRole] || 'Pool',
+          basePriceLakhs: filters.useDefaultBasePrice ? room.defaultBasePriceLakhs : p.basePriceLakhs,
+          status: LotStatus.QUEUED
+        }))
+      });
 
       const nextVersion = room.version + 1;
       await tx.room.update({ where: { id: room.id }, data: { version: nextVersion } });

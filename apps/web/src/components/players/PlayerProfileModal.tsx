@@ -6,10 +6,14 @@ import { api } from '@/lib/api';
 import { formatCricketStyle, formatLakhs } from '@/lib/formatPrice';
 import { Badge } from '@/components/ui/Badge';
 import { Award, Calendar, Database, Globe, Shield, Trophy, User, X } from 'lucide-react';
+import { PlayerIntelligencePanel } from './PlayerIntelligencePanel';
 
 interface PlayerProfileModalProps {
   playerId: string | null;
   onClose: () => void;
+  initialTab?: 'CAREER' | 'INTELLIGENCE';
+  intelligenceRoomCode?: string;
+  canViewIntelligence?: boolean;
 }
 
 const ROLE_LABELS: Record<CricketRole, string> = {
@@ -24,11 +28,21 @@ function fmtStat(val: number | string | null | undefined, suffix = ''): string {
   return `${val}${suffix}`;
 }
 
-export function PlayerProfileModal({ playerId, onClose }: PlayerProfileModalProps) {
+export function PlayerProfileModal({
+  playerId,
+  onClose,
+  initialTab = 'CAREER',
+  intelligenceRoomCode,
+  canViewIntelligence = false
+}: PlayerProfileModalProps) {
+  const allowIntelligence = Boolean(canViewIntelligence && intelligenceRoomCode);
   const [profile, setProfile] = useState<PlayerProfileDetailDto | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
+  const [activeTab, setActiveTab] = useState<'CAREER' | 'INTELLIGENCE'>(
+    allowIntelligence ? initialTab : 'CAREER'
+  );
 
   useEffect(() => {
     if (!playerId) return;
@@ -51,6 +65,7 @@ export function PlayerProfileModal({ playerId, onClose }: PlayerProfileModalProp
     setIsLoading(true);
     setError(null);
     setImgFailed(false);
+    setActiveTab(allowIntelligence ? initialTab : 'CAREER');
 
     api
       .get(`/players/${playerId}/profile`)
@@ -206,6 +221,40 @@ export function PlayerProfileModal({ playerId, onClose }: PlayerProfileModalProp
                 </div>
               </div>
 
+              {/* Dossier Tabs — Phase Analytics & Ratings only visible to authorized franchise owners */}
+              {allowIntelligence && (
+                <div className="flex items-center gap-2 border-b border-stadium-border pb-2.5">
+                  <button
+                    type="button"
+                    data-testid="tab-career-seasons"
+                    onClick={() => setActiveTab('CAREER')}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      activeTab === 'CAREER'
+                        ? 'bg-gold-500 text-stadium-bg'
+                        : 'text-stadium-muted hover:text-white bg-stadium-card/60 border border-stadium-border'
+                    }`}
+                  >
+                    Career & Seasons
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="tab-phase-intelligence"
+                    onClick={() => setActiveTab('INTELLIGENCE')}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      activeTab === 'INTELLIGENCE'
+                        ? 'bg-electric-500 text-white'
+                        : 'text-stadium-muted hover:text-white bg-stadium-card/60 border border-stadium-border'
+                    }`}
+                  >
+                    Phase Analytics & Ratings
+                  </button>
+                </div>
+              )}
+
+              {allowIntelligence && activeTab === 'INTELLIGENCE' && intelligenceRoomCode ? (
+                <PlayerIntelligencePanel playerId={profile.id} roomCode={intelligenceRoomCode} />
+              ) : (
+                <>
               {/* Separated Batting / Bowling / Fielding Career Overview */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
                 <div className="rounded-xl border border-stadium-border bg-stadium-card/60 p-4 space-y-2.5">
@@ -365,6 +414,8 @@ export function PlayerProfileModal({ playerId, onClose }: PlayerProfileModalProp
                   </div>
                 )}
               </div>
+                </>
+              )}
 
               {/* Provenance Footer */}
               <div className="rounded-xl border border-stadium-border bg-stadium-bg/60 px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-stadium-muted">

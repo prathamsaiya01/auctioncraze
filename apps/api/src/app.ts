@@ -9,6 +9,7 @@ import { errorHandler } from './middleware/errorHandler';
 import sessionRoutes from './modules/sessions/sessionRoutes';
 import roomRoutes from './modules/rooms/roomRoutes';
 import playerRoutes from './modules/players/playerRoutes';
+import intelligenceRoutes from './modules/intelligence/intelligenceRoutes';
 
 export function createApp(): express.Application {
   const app = express();
@@ -59,6 +60,7 @@ export function createApp(): express.Application {
   app.use('/api/v1/sessions', sessionRoutes);
   app.use('/api/v1/rooms', roomRoutes);
   app.use('/api/v1/players', playerRoutes);
+  app.use('/api/v1/intelligence', intelligenceRoutes);
 
   app.use(errorHandler);
 

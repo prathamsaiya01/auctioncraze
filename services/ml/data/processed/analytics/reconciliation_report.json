@@ -1,0 +1,46 @@
+{
+  "generatedAtUtc": "2026-11-26T06:30:11.281711+00:00",
+  "provenance": "Cricsheet IPL Male JSON Archive (ipl_json.zip) + People Register (people.csv)",
+  "parsingStats": {
+    "total_match_files": 1243,
+    "unique_matches": 1243,
+    "regular_innings_parsed": 2480,
+    "super_over_innings_excluded_from_career": 34,
+    "deliveries_parsed": 295557,
+    "legal_deliveries": 284465,
+    "wides_deliveries": 9871,
+    "noballs_deliveries": 1221,
+    "byes_deliveries": 743,
+    "legbyes_deliveries": 4398,
+    "penalty_deliveries": 2,
+    "non_boundary_excluded": 29,
+    "bowler_wickets": 13460,
+    "non_bowler_wickets": 1214,
+    "impact_player_substitutions": 556,
+    "no_result_matches": 9,
+    "tie_eliminator_matches": 16,
+    "dls_or_shortened_matches": 23
+  },
+  "duplicateMatchIds": [],
+  "totalAppearances": 27909,
+  "totalAdvancedStatRows": 4972,
+  "reconciliationPassed": true,
+  "reconciliationMismatches": [],
+  "diamondDuckReconciliationNotes": [
+    {
+      "cricsheetId": "2503e881",
+      "season": "2008",
+      "note": "Non-striker dismissed facing 0 balls (0 runs, 1 dismissal counted accurately in ball-by-ball analytics)"
+    },
+    {
+      "cricsheetId": "c24a2c5d",
+      "season": "2009",
+      "note": "Non-striker dismissed facing 0 balls (0 runs, 1 dismissal counted accurately in ball-by-ball analytics)"
+    },
+    {
+      "cricsheetId": "d67d5f00",
+      "season": "2020",
+      "note": "Non-striker dismissed facing 0 balls (0 runs, 1 dismissal counted accurately in ball-by-ball analytics)"
+    }
+  ]
+}
