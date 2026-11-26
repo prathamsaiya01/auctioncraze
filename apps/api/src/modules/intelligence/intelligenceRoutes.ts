@@ -24,4 +24,18 @@ router.post(
 router.get('/rooms/:code/match-predictor/metadata', IntelligenceController.matchPredictorMetadata);
 router.post('/rooms/:code/match-predictor/predict', IntelligenceController.predictMatch);
 
+// Phase 6C: Post-Auction Team Ratings Dashboard endpoints
+router.get('/rooms/:code/post-auction/readiness', IntelligenceController.postAuctionReadiness);
+router.get('/rooms/:code/post-auction/ratings', IntelligenceController.postAuctionHostRatings);
+router.get('/rooms/:code/post-auction/comparison', IntelligenceController.postAuctionHostComparison);
+router.get(
+  '/rooms/:code/post-auction/franchises/:franchiseId/report',
+  IntelligenceController.postAuctionFranchiseReport
+);
+router.get(
+  '/rooms/:code/post-auction/franchises/:franchiseId/playing-xi',
+  IntelligenceController.postAuctionFranchisePlayingXI
+);
+router.post('/rooms/:code/post-auction/recalculate', IntelligenceController.postAuctionRecalculate);
+
 export default router;

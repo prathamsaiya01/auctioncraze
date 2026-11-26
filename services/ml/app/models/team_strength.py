@@ -72,7 +72,8 @@ def analyze_team_strength(
 
         b_style = meta.get("bowling_style") if meta else None
         bowl_cat = _classify_bowl_arm_style(b_style)
-        is_bowler_type = role in ("BOWLER", "ALL_ROUNDER") or (rating and rating.get("bowling_rating") is not None)
+        bowl_r_val = rating.get("bowling_rating") if rating else None
+        is_bowler_type = role in ("BOWLER", "ALL_ROUNDER") or (bowl_r_val is not None and bowl_r_val >= 52.0)
         if is_bowler_type:
             if bowl_cat == "PACE":
                 pace_count += 1
@@ -173,15 +174,16 @@ def analyze_team_strength(
     bowl_cov = min(1.0, len(top_bowl) / 5.0)
     bowling_depth = round(min(99.0, bowl_avg_q * (0.50 + 0.50 * bowl_cov)), 2)
 
-    # Pace-Spin Balance (optimal around 60% pace / 40% spin with >=2 of each)
-    total_classed = pace_count + spin_count
+    # Pace-Spin Balance over core rotation (capped at 4 pace / 3 spin so bench bloat cannot game ratio)
+    eff_pace = min(pace_count, 4)
+    eff_spin = min(spin_count, 3)
+    total_classed = eff_pace + eff_spin
     if total_classed == 0:
         pace_spin_balance = 0.0
     else:
-        pace_share = pace_count / total_classed
-        spin_share = spin_count / total_classed
+        pace_share = eff_pace / total_classed
         dist_from_ideal = abs(pace_share - 0.60)
-        coverage_bonus = min(1.0, min(pace_count, 3) / 3.0 * 0.6 + min(spin_count, 2) / 2.0 * 0.4)
+        coverage_bonus = min(1.0, min(eff_pace, 3) / 3.0 * 0.6 + min(eff_spin, 2) / 2.0 * 0.4)
         pace_spin_balance = round(max(10.0, min(98.0, (92.0 - dist_from_ideal * 95.0) * (0.55 + 0.45 * coverage_bonus))), 2)
 
     # All-rounder index combines quality + depth (target >= 2 quality ARs)
@@ -192,7 +194,8 @@ def analyze_team_strength(
     else:
         all_rounder_index = 25.0
 
-    fielding_index = round(sum(field_scores) / len(field_scores), 2) if field_scores else 50.0
+    top_fielders = sorted(field_scores, reverse=True)[:11]
+    fielding_index = round(sum(top_fielders) / len(top_fielders), 2) if top_fielders else 50.0
     wk_count = role_counts["WICKET_KEEPER"]
     wk_factor = 1.0 if wk_count >= 2 else (0.94 if wk_count == 1 else 0.80)
 

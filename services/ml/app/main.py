@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query
 
 from app.models.match_predictor import get_match_predictor_metadata, predict_match_outcome
 from app.models.playing_xi import predict_playing_xi
+from app.models.post_auction_report import build_post_auction_franchise_report
 from app.models.predictor import predict_performance
 from app.models.rating_engine import compute_player_rating, get_rating_leaderboard
 from app.models.registry import ModelRegistry
@@ -33,6 +34,7 @@ from app.schemas.contracts import (
     PlayerRatingResponse,
     PlayingXIRequest,
     PlayingXIResponse,
+    PostAuctionFranchiseRequest,
     PostMatchAnalysisRequest,
     TeamStrengthRequest,
     TeamStrengthResponse,
@@ -343,6 +345,21 @@ def match_prediction(req: MatchPredictionRequest):
         return MatchPredictionResponse(**res)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@v1.post("/analysis/post-auction-franchise")
+def post_auction_franchise_report(req: PostAuctionFranchiseRequest):
+    _require_trained(MLModelKey.TEAM_STRENGTH)
+    _require_trained(MLModelKey.PLAYER_RATING)
+    _require_trained(MLModelKey.PLAYING_XI)
+    return build_post_auction_franchise_report(
+        room_id=req.room_id,
+        franchise_code=req.franchise_code,
+        squad=req.squad,
+        min_squad_size=req.min_squad_size,
+        max_squad_size=req.max_squad_size,
+        max_overseas_in_squad=req.max_overseas_in_squad,
+    )
 
 
 @v1.post("/analysis/post-match")

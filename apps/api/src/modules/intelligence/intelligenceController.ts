@@ -1,124 +1,13 @@
 import { NextFunction, Response } from 'express';
 import { prisma } from '@auctioncraze/database';
-import { config } from '../../config/env';
 import { AuthenticatedRequest } from '../../middleware/auth';
 import { AppError } from '../../middleware/errorHandler';
 import {
   requireActiveFranchiseOwner,
   requireExactFranchiseOwnership
 } from './intelligenceAuth';
-
-const SENSITIVE_INTERNAL_KEYS = new Set([
-  'artifact_path',
-  'dataset_fingerprint',
-  'holdout_metrics',
-  'validation_metrics',
-  'validation_candidates',
-  'baseline_comparisons',
-  'selected_candidate',
-  'feature_breakdown',
-  'team_elo',
-  'sample_counts'
-]);
-
-function scrubSensitiveFields<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((item) => scrubSensitiveFields(item)) as unknown as T;
-  }
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (SENSITIVE_INTERNAL_KEYS.has(k)) continue;
-      out[k] = scrubSensitiveFields(v);
-    }
-    return out as T;
-  }
-  return value;
-}
-
-async function callMlService<T = unknown>(
-  path: string,
-  options?: { method?: string; body?: unknown }
-): Promise<T> {
-  const internalKey = config.internalMlServiceKey;
-  if (!internalKey || internalKey.length < 32) {
-    throw new AppError(
-      'Internal ML service secret is missing (failing closed).',
-      503,
-      'INTERNAL_ML_AUTH_MISSING'
-    );
-  }
-
-  const url = `${config.mlServiceUrl.replace(/\/+$/, '')}${path}`;
-  let response: globalThis.Response;
-  try {
-    response = await fetch(url, {
-      method: options?.method || 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Internal-Service-Key': internalKey
-      },
-      ...(options?.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
-      signal: AbortSignal.timeout(8000)
-    });
-  } catch {
-    throw new AppError(
-      'Cricket intelligence service is currently offline or unreachable.',
-      503,
-      'ML_SERVICE_UNAVAILABLE'
-    );
-  }
-
-  let payload: any = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const detail =
-      (payload && (payload.detail || payload.message)) ||
-      `ML service error (${response.status})`;
-    const code =
-      response.status === 503
-        ? 'MODEL_UNAVAILABLE'
-        : response.status === 422
-        ? 'INSUFFICIENT_OR_INVALID_INPUT'
-        : response.status === 404
-        ? 'NOT_FOUND'
-        : response.status === 401 || response.status === 403
-        ? 'ML_INTERNAL_UNAUTHORIZED'
-        : 'ML_REQUEST_FAILED';
-    throw new AppError(String(detail), response.status, code);
-  }
-
-  return scrubSensitiveFields(payload as T);
-}
-
-async function resolvePlayerKeyForMl(idOrKey: string): Promise<string> {
-  const trimmed = idOrKey.trim();
-  const found = await prisma.masterPlayer.findFirst({
-    where: {
-      OR: [
-        { id: trimmed },
-        { cricsheetId: trimmed },
-        { externalKey: trimmed },
-        { fullName: { equals: trimmed, mode: 'insensitive' } }
-      ]
-    },
-    select: {
-      cricsheetId: true,
-      externalKey: true,
-      fullName: true
-    }
-  });
-
-  if (!found) {
-    return trimmed;
-  }
-  return found.cricsheetId || found.externalKey || found.fullName;
-}
+import { callMlService, resolvePlayerKeyForMl } from './mlClient';
+import { PostAuctionRatingService } from './postAuctionRatingService';
 
 async function loadOwnedFranchiseSquad(roomId: string, franchiseId: string) {
   const franchise = await prisma.roomFranchise.findFirst({
@@ -202,6 +91,7 @@ export class IntelligenceController {
           authorized: true,
           roomCode: ctx.room.code,
           role: ctx.participant.role,
+          isHost: ctx.participant.isHost,
           franchiseId: ctx.ownedFranchise.id,
           franchiseCode: ctx.ownedFranchise.presetCode,
           franchiseName: ctx.ownedFranchise.name
@@ -350,6 +240,108 @@ export class IntelligenceController {
         method: 'POST',
         body: req.body || {}
       });
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Phase 6C: Post-Auction Team Ratings Dashboard Endpoints
+  // ------------------------------------------------------------------
+
+  static async postAuctionReadiness(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const data = await PostAuctionRatingService.getReadiness(
+        String(req.params.code || ''),
+        req.guestSession!.id
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async postAuctionHostRatings(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const data = await PostAuctionRatingService.getHostRatings(
+        String(req.params.code || ''),
+        req.guestSession!.id
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async postAuctionHostComparison(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const data = await PostAuctionRatingService.getHostComparison(
+        String(req.params.code || ''),
+        req.guestSession!.id
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async postAuctionFranchiseReport(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const data = await PostAuctionRatingService.getFranchiseReport(
+        String(req.params.code || ''),
+        req.guestSession!.id,
+        String(req.params.franchiseId || '')
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async postAuctionFranchisePlayingXI(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const data = await PostAuctionRatingService.getFranchisePlayingXI(
+        String(req.params.code || ''),
+        req.guestSession!.id,
+        String(req.params.franchiseId || '')
+      );
+      res.json({ success: true, data });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async postAuctionRecalculate(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const data = await PostAuctionRatingService.recalculate(
+        String(req.params.code || ''),
+        req.guestSession!.id
+      );
       res.json({ success: true, data });
     } catch (err) {
       next(err);

@@ -137,8 +137,9 @@ model Room {
   participants RoomParticipant[]
   lots         RoomPlayerLot[]
   retentions   RoomRetention[]
-  events       AuctionEvent[]
-  chatMessages ChatMessage[]
+  events                AuctionEvent[]
+  chatMessages          ChatMessage[]
+  postAuctionSnapshots  PostAuctionRatingSnapshot[]
 
   @@index([visibility, status])
   @@index([code])
@@ -439,4 +440,19 @@ model MLModelRegistry {
   trainedAt        DateTime @default(now())
 
   @@unique([modelKey, version])
+}
+
+model PostAuctionRatingSnapshot {
+  id                String   @id @default(uuid())
+  roomId            String
+  snapshotVersion   Int
+  rosterFingerprint String
+  calculatedAt      DateTime @default(now())
+  triggeredByRole   String
+  summaryJson       Json
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, snapshotVersion])
+  @@index([roomId, calculatedAt])
 }

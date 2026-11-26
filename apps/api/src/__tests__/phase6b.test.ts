@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import dotenv from 'dotenv';
 import { prisma } from '@auctioncraze/database';
 import { RoomRole, RoomVisibility } from '@auctioncraze/shared';
+
+dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 const ML_PORT = 8019;
 const ML_FAILCLOSED_PORT = 8020;

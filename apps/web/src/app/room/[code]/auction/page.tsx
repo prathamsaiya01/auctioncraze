@@ -33,6 +33,7 @@ import { SquadIntelligencePanel } from '@/components/room/SquadIntelligencePanel
 import {
   ArrowLeft,
   Award,
+  BarChart3,
   CheckCircle2,
   Clock,
   Crown,
@@ -928,6 +929,28 @@ export default function LiveAuctionPage() {
                 Every lot in the auction pool has been settled. Inspect every franchise&apos;s final squad and remaining purse below.
               </p>
               <div className="pt-2 flex flex-wrap justify-center gap-3">
+                {isHost && (
+                  <Link href={`/room/${auction.roomCode}/team-ratings`}>
+                    <Button
+                      variant="gold"
+                      leftIcon={<BarChart3 className="w-4 h-4" />}
+                      data-testid="completed-team-ratings-btn"
+                    >
+                      TEAM RATINGS
+                    </Button>
+                  </Link>
+                )}
+                {!isHost && isActiveOwner && (
+                  <Link href={`/room/${auction.roomCode}/team-ratings`}>
+                    <Button
+                      variant="electric"
+                      leftIcon={<BarChart3 className="w-4 h-4" />}
+                      data-testid="completed-owner-report-btn"
+                    >
+                      MY TEAM REPORT
+                    </Button>
+                  </Link>
+                )}
                 {isHost && auction.unsoldCount > 0 && (
                   <Button
                     variant="gold"

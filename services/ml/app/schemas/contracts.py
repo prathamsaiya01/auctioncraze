@@ -236,3 +236,12 @@ class PerformancePredictionResponse(BaseModel):
     prediction_interval: PredictionInterval
     uncertainty_note: str
     allow_bidding_advice: bool = False
+
+
+class PostAuctionFranchiseRequest(BaseModel):
+    room_id: str
+    franchise_code: str
+    squad: List[SquadPlayerInput]
+    min_squad_size: int = 15
+    max_squad_size: int = 25
+    max_overseas_in_squad: int = 8

@@ -1,4 +1,4 @@
-import { RoomRole as DbRoomRole, prisma } from '@auctioncraze/database';
+import { RoomRole as DbRoomRole, RoomStatus as DbRoomStatus, prisma } from '@auctioncraze/database';
 import { roomCodeParamSchema } from '@auctioncraze/shared';
 import { AppError } from '../../middleware/errorHandler';
 
@@ -6,11 +6,16 @@ export interface ActiveOwnerContext {
   room: {
     id: string;
     code: string;
+    status: DbRoomStatus;
+    hostParticipantId: string | null;
+    minSquadSize: number;
+    maxSquadSize: number;
     maxOverseas: number;
   };
   participant: {
     id: string;
     role: DbRoomRole;
+    isHost: boolean;
     franchiseId: string;
     displayName: string;
   };
@@ -37,6 +42,10 @@ export async function requireActiveFranchiseOwner(
     select: {
       id: true,
       code: true,
+      status: true,
+      hostParticipantId: true,
+      minSquadSize: true,
+      maxSquadSize: true,
       maxOverseas: true
     }
   });
@@ -96,16 +105,53 @@ export async function requireActiveFranchiseOwner(
     );
   }
 
+  const isHost =
+    participant.id === room.hostParticipantId && participant.role === DbRoomRole.HOST;
+
   return {
     room,
     participant: {
       id: participant.id,
       role: participant.role,
+      isHost,
       franchiseId: ownedFranchise.id,
       displayName: participant.displayName
     },
     ownedFranchise
   };
+}
+
+/**
+ * Verifies the auction has reached COMPLETED status before serving post-auction reports.
+ */
+export function assertAuctionCompleted(ctx: ActiveOwnerContext): void {
+  if (ctx.room.status !== DbRoomStatus.COMPLETED) {
+    throw new AppError(
+      `Post-auction team ratings are only available after the auction completes (current status: ${ctx.room.status}).`,
+      409,
+      'AUCTION_NOT_COMPLETED'
+    );
+  }
+}
+
+/**
+ * Verifies the caller is the active Room Host AND the auction is COMPLETED.
+ * Used for league-wide host-only team comparisons, rankings, and recalculation.
+ */
+export async function requireHostCompletedDashboard(
+  guestSessionId: string,
+  rawRoomCode: string
+): Promise<ActiveOwnerContext> {
+  const ctx = await requireActiveFranchiseOwner(guestSessionId, rawRoomCode);
+  if (!ctx.participant.isHost) {
+    throw new AppError(
+      'Access denied: only the room host can access league-wide franchise comparisons.',
+      403,
+      'HOST_ONLY'
+    );
+  }
+  assertAuctionCompleted(ctx);
+  return ctx;
 }
 
 /**
