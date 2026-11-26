@@ -12,6 +12,8 @@ import {
   SOCKET_EVENTS
 } from '@auctioncraze/shared';
 import { createApp } from '../app';
+import { config } from '../config/env';
+import { clearRateLimitEntriesForTest } from '../lib/coordinationStore';
 import { connectRedis, disconnectRedis, redis } from '../lib/redis';
 import { closeSocketServer, setupSocketServer } from '../sockets/socketServer';
 import { AuctionTimerManager } from '../modules/auction/timerManager';
@@ -120,10 +122,7 @@ async function apiGet(baseUrl: string, path: string, token: string) {
 async function runPhase4Tests() {
   await prisma.$connect();
   await connectRedis();
-  const rlKeys = await redis.keys('rl:*');
-  if (rlKeys.length > 0) {
-    await redis.del(...rlKeys);
-  }
+  await clearRateLimitEntriesForTest('rl:*');
   await prisma.room.deleteMany({
     where: { name: { in: ['Phase 4 Championship Room', 'Room 2 Constrained Purse'] } }
   });
@@ -414,12 +413,20 @@ async function runPhase4Tests() {
     await apiPost(baseUrl, `/rooms/${room1.code}/auction/next`, host.token, {});
 
     // 12. Timer recovery after simulated server restart
-    await redis.del('auction:active_timers', `auction:timer:${room1.code}`);
-    const recoveredCount = await AuctionTimerManager.recoverActiveTimersOnBoot();
-    assert.ok(recoveredCount >= 1, 'Expected at least 1 active room timer to recover from DB');
-    const restoredZScore = await redis.zscore('auction:active_timers', room1.code);
-    assert.ok(restoredZScore !== null, 'Expected recovered timer in Redis ZSET');
-    console.log('✓ Test 12: Active timer recovered from PostgreSQL after Redis flush');
+    if (config.enableRedis) {
+      await redis.del('auction:active_timers', `auction:timer:${room1.code}`);
+      const recoveredCount = await AuctionTimerManager.recoverActiveTimersOnBoot();
+      assert.ok(recoveredCount >= 1, 'Expected at least 1 active room timer to recover from DB');
+      const restoredZScore = await redis.zscore('auction:active_timers', room1.code);
+      assert.ok(restoredZScore !== null, 'Expected recovered timer in Redis ZSET');
+    } else {
+      await AuctionTimerManager.clearTimer(room1.code);
+      const recoveredCount = await AuctionTimerManager.recoverActiveTimersOnBoot();
+      assert.ok(recoveredCount >= 1, 'Expected at least 1 active room timer to recover from DB');
+      const restoredState = AuctionTimerManager.getMemoryTimerState(room1.code);
+      assert.ok(restoredState !== null, 'Expected recovered timer in single-instance memory store');
+    }
+    console.log('✓ Test 12: Active timer recovered from PostgreSQL after timer store reset');
 
     // 13. Reconnection state recovery via fresh socket ROOM_JOIN
     const reconnectSock = await connectSocket(baseUrl, owner2.token);

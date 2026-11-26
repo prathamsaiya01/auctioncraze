@@ -9,7 +9,7 @@ import {
   RoomVisibility
 } from '@auctioncraze/shared';
 import { createApp } from '../app';
-import { connectRedis, disconnectRedis, redis } from '../lib/redis';
+import { connectRedis, disconnectRedis } from '../lib/redis';
 import { closeSocketServer, setupSocketServer } from '../sockets/socketServer';
 import { AuctionTimerManager } from '../modules/auction/timerManager';
 
@@ -224,8 +224,7 @@ async function runInviteSecurityTests() {
       if (createdRoomCodes.length > 0) {
         await prisma.room.deleteMany({ where: { code: { in: createdRoomCodes } } });
         for (const c of createdRoomCodes) {
-          await redis.zrem('auction:active_timers', c);
-          await redis.del(`auction:timer:${c}`);
+          await AuctionTimerManager.clearTimer(c);
         }
       }
       if (createdSeasonIds.length > 0) {

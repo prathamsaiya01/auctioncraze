@@ -12,7 +12,8 @@ import {
   SOCKET_EVENTS
 } from '@auctioncraze/shared';
 import { createApp } from '../app';
-import { connectRedis, disconnectRedis, redis } from '../lib/redis';
+import { clearRateLimitEntriesForTest } from '../lib/coordinationStore';
+import { connectRedis, disconnectRedis } from '../lib/redis';
 import { closeSocketServer, setupSocketServer } from '../sockets/socketServer';
 import { AuctionTimerManager } from '../modules/auction/timerManager';
 
@@ -92,8 +93,7 @@ async function reqJson(
 async function runPhase5Tests() {
   await prisma.$connect();
   await connectRedis();
-  const rlKeys = await redis.keys('rl:*');
-  if (rlKeys.length > 0) await redis.del(...rlKeys);
+  await clearRateLimitEntriesForTest('rl:*');
   await prisma.room.deleteMany({ where: { name: 'Phase 5 Unsold Reentry Room' } });
   await prisma.masterPlayer.deleteMany({
     where: { cricsheetId: { in: ['test-cs-p5-alpha', 'test-cs-p5-fail'] } }

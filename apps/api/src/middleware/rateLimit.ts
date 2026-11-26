@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { redis } from '../lib/redis';
+import { incrementCounter } from '../lib/coordinationStore';
 import { AuthenticatedRequest } from './auth';
 
 interface RateLimitOptions {
@@ -37,12 +37,9 @@ export function rateLimit(options: RateLimitOptions) {
     try {
       const clientKey = resolveRateLimitClientKey(req);
       const bucket = Math.floor(Date.now() / 1000 / options.windowSeconds);
-      const redisKey = `rl:${options.keyPrefix}:${clientKey}:${bucket}`;
+      const rateKey = `rl:${options.keyPrefix}:${clientKey}:${bucket}`;
 
-      const count = await redis.incr(redisKey);
-      if (count === 1) {
-        await redis.expire(redisKey, options.windowSeconds + 1);
-      }
+      const count = await incrementCounter(rateKey, options.windowSeconds + 1);
 
       res.setHeader('X-RateLimit-Limit', String(options.maxRequests));
       res.setHeader('X-RateLimit-Remaining', String(Math.max(0, options.maxRequests - count)));

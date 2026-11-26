@@ -7,9 +7,13 @@ import { chatSendSchema, placeBidSchema, SOCKET_EVENTS, SOCKET_ROOMS } from '@au
 import { config } from '../config/env';
 import { verifyGuestToken } from '../middleware/auth';
 import {
+  addPresenceSocket,
+  clearPresenceKey,
+  removePresenceSocket
+} from '../lib/coordinationStore';
+import {
   attachRedisLifecycleLogging,
   createRedisClientOptions,
-  redis,
   safeQuitRedis
 } from '../lib/redis';
 import { mapRoomToDetailDto } from '../modules/rooms/roomMapper';
@@ -58,7 +62,7 @@ export async function kickParticipantSockets(
     s.leave(SOCKET_ROOMS.room(normalized));
     s.leave(participantChannel);
   }
-  await redis.del(onlineSocketsKey(normalized, participantId)).catch(() => {});
+  await clearPresenceKey(onlineSocketsKey(normalized, participantId)).catch(() => {});
 }
 
 async function fetchPublicRoomSnapshot(roomCode: string) {
@@ -80,18 +84,20 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
     transports: ['websocket', 'polling']
   });
 
-  pubClient = new Redis(
-    config.redisUrl,
-    createRedisClientOptions('SocketPub', { maxRetriesPerRequest: null, lazyConnect: false })
-  );
-  subClient = pubClient.duplicate();
-  attachRedisLifecycleLogging(pubClient, 'SocketPub');
-  attachRedisLifecycleLogging(subClient, 'SocketSub');
+  if (config.enableRedis) {
+    pubClient = new Redis(
+      config.redisUrl,
+      createRedisClientOptions('SocketPub', { maxRetriesPerRequest: null, lazyConnect: false })
+    );
+    subClient = pubClient.duplicate();
+    attachRedisLifecycleLogging(pubClient, 'SocketPub');
+    attachRedisLifecycleLogging(subClient, 'SocketSub');
 
-  io.adapter(createAdapter(pubClient, subClient));
-  io.of('/').adapter.on('error', (err: any) => {
-    console.error(`[SocketAdapter] Redis adapter error: ${err?.message || 'Unknown error'}`);
-  });
+    io.adapter(createAdapter(pubClient, subClient));
+    io.of('/').adapter.on('error', (err: any) => {
+      console.error(`[SocketAdapter] Redis adapter error: ${err?.message || 'Unknown error'}`);
+    });
+  }
 
   io.use(async (socket: AuthenticatedSocket, next) => {
     const token =
@@ -179,8 +185,7 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
           socket.joinedRooms?.set(room.code, participant.id);
 
           const presenceKey = onlineSocketsKey(room.code, participant.id);
-          await redis.sadd(presenceKey, socket.id);
-          await redis.expire(presenceKey, 86400);
+          await addPresenceSocket(presenceKey, socket.id, 86400);
 
           const wasDisconnected = !participant.isConnected;
           await prisma.roomParticipant.update({
@@ -280,8 +285,7 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
           socket.joinedRooms?.set(fullRoom.code, participant.id);
 
           const presenceKey = onlineSocketsKey(fullRoom.code, participant.id);
-          await redis.sadd(presenceKey, socket.id);
-          await redis.expire(presenceKey, 86400);
+          await addPresenceSocket(presenceKey, socket.id, 86400);
           if (!participant.isConnected) {
             await prisma.roomParticipant.update({
               where: { id: participant.id },
@@ -463,8 +467,7 @@ async function handleSocketDetached(
 ): Promise<void> {
   try {
     const key = onlineSocketsKey(roomCode, participantId);
-    await redis.srem(key, socketId);
-    const remaining = await redis.scard(key);
+    const remaining = await removePresenceSocket(key, socketId);
     if (remaining > 0) {
       return;
     }

@@ -12,7 +12,7 @@ const ML_PORT = 8019;
 const ML_FAILCLOSED_PORT = 8020;
 process.env.ML_SERVICE_URL = `http://127.0.0.1:${ML_PORT}`;
 
-async function waitForMlHealth(url: string, timeoutMs = 20000): Promise<void> {
+async function waitForMlHealth(url: string, timeoutMs = 45000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {

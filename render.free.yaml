@@ -1,0 +1,35 @@
+version: "1"
+
+# Zero-cost (Rs 0/month) Render Free single-instance Blueprint.
+# Requires external Neon Free PostgreSQL (DATABASE_URL) and Netlify Free frontend (CORS_ORIGIN).
+# Strictly 1 API instance: horizontal scaling is disabled when ENABLE_REDIS=false.
+services:
+  - type: web
+    name: auctioncraze-api-free
+    runtime: node
+    plan: free
+    numInstances: 1
+    region: singapore
+    healthCheckPath: /health
+    buildCommand: npm ci --include=dev && npm run db:generate && npm run build --workspace=@auctioncraze/shared && npm run build --workspace=@auctioncraze/database && npm run build --workspace=@auctioncraze/auction-engine && npm run build --workspace=@auctioncraze/api
+    preDeployCommand: npm run db:migrate:deploy
+    startCommand: npm run start --workspace=@auctioncraze/api
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ENABLE_REDIS
+        value: "false"
+      - key: ENABLE_ML_SERVICE
+        value: "false"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: GUEST_SESSION_TTL_SECONDS
+        value: "604800"
+      - key: DATABASE_URL
+        sync: false # Set to Neon Free Direct connection string with ?sslmode=require&connection_limit=8&connect_timeout=15
+      - key: CORS_ORIGIN
+        sync: false # Set to exact Netlify Free HTTPS URL (e.g. https://your-site.netlify.app)
+      - key: JWT_SECRET
+        generateValue: true

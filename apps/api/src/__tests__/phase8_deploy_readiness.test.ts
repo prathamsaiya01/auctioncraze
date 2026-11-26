@@ -5,7 +5,8 @@ import Redis from 'ioredis';
 import { prisma } from '@auctioncraze/database';
 import { createApp } from '../app';
 import { config, parseEnvConfig } from '../config/env';
-import { attachRedisLifecycleLogging, connectRedis, disconnectRedis, redis, safeQuitRedis } from '../lib/redis';
+import { clearRateLimitEntriesForTest } from '../lib/coordinationStore';
+import { attachRedisLifecycleLogging, connectRedis, disconnectRedis, safeQuitRedis } from '../lib/redis';
 import { rateLimit, resolveRateLimitClientKey } from '../middleware/rateLimit';
 import { authenticateGuest } from '../middleware/auth';
 import { resolveMetadataBase } from '../../../web/src/lib/siteMetadata';
@@ -22,8 +23,7 @@ async function runPhase8DeployReadinessTests() {
   await connectRedis();
 
   // Clean test rate limit buckets before running
-  const staleKeys = await redis.keys('rl:test_proxy_*');
-  if (staleKeys.length > 0) await redis.del(...staleKeys);
+  await clearRateLimitEntriesForTest('rl:test_proxy_*');
 
   // ------------------------------------------------------------------
   // 1. Env validation tests (Task 7)
@@ -221,8 +221,7 @@ async function runPhase8DeployReadinessTests() {
   resilientDummy.emit('error', new Error('simulated connection blip'));
   await safeQuitRedis(resilientDummy, 'TestDummy');
 
-  const cleanupKeys = await redis.keys('rl:test_proxy_*');
-  if (cleanupKeys.length > 0) await redis.del(...cleanupKeys);
+  await clearRateLimitEntriesForTest('rl:test_proxy_*');
 
   // Also ensure config runtime loaded cleanly without throwing
   assert.ok(config.port > 0);

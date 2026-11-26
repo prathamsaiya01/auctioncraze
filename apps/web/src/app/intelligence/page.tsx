@@ -66,6 +66,7 @@ function OwnerIntelligenceContent() {
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [lbLoading, setLbLoading] = useState(false);
   const [lbError, setLbError] = useState<string | null>(null);
+  const [mlDisabledNotice, setMlDisabledNotice] = useState<string | null>(null);
   const [modalPlayerId, setModalPlayerId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -134,7 +135,11 @@ function OwnerIntelligenceContent() {
           setVenue(res.data.venues[0]);
         }
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        if (err?.code === 'ML_SERVICE_DISABLED') {
+          setMlDisabledNotice(err.message);
+        }
+      });
   }, [access]);
 
   useEffect(() => {
@@ -157,7 +162,12 @@ function OwnerIntelligenceContent() {
         `/intelligence/rooms/${encodeURIComponent(access.roomCode)}/ratings/leaderboard?${qs.toString()}`
       )
       .then((res: any) => setLeaderboard(res.data?.players || []))
-      .catch((err: any) => setLbError(err?.message || 'Unable to load ratings leaderboard.'))
+      .catch((err: any) => {
+        if (err?.code === 'ML_SERVICE_DISABLED') {
+          setMlDisabledNotice(err.message);
+        }
+        setLbError(err?.message || 'Unable to load ratings leaderboard.');
+      })
       .finally(() => setLbLoading(false));
   }, [access, roleFilter, scopeFilter, sortBy]);
 
@@ -291,6 +301,14 @@ function OwnerIntelligenceContent() {
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {mlDisabledNotice && (
+          <Card className="p-4 border-amber-500/40 bg-amber-500/10" data-testid="ml-disabled-banner">
+            <p className="text-sm font-semibold text-amber-300">
+              ML Cricket Intelligence Disabled in Zero-Cost Mode
+            </p>
+            <p className="text-xs text-amber-200/85 mt-1">{mlDisabledNotice}</p>
+          </Card>
+        )}
         <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-2 text-emerald-200 font-medium">
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />

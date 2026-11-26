@@ -11,7 +11,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 const ML_PORT = 8021;
 process.env.ML_SERVICE_URL = `http://127.0.0.1:${ML_PORT}`;
 
-async function waitForMlHealth(url: string, timeoutMs = 20000): Promise<void> {
+async function waitForMlHealth(url: string, timeoutMs = 45000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {

@@ -17,8 +17,9 @@ export function getRoomSocket(token: string): Socket {
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: 20,
-      reconnectionDelay: 800
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000
     });
   }
 

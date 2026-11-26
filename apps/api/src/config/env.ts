@@ -7,9 +7,8 @@ const PLACEHOLDER_MARKERS = ['replace_with_', 'changeme', 'your_secret_here', 'e
 
 function containsLoopbackHost(rawUrl: string): boolean {
   try {
-    const withScheme = /^https?:\/\//i.test(rawUrl) || /^rediss?:\/\//i.test(rawUrl)
-      ? rawUrl
-      : `http://${rawUrl}`;
+    const withScheme =
+      /^https?:\/\//i.test(rawUrl) || /^rediss?:\/\//i.test(rawUrl) ? rawUrl : `http://${rawUrl}`;
     const host = new URL(withScheme).hostname.toLowerCase();
     return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
   } catch {
@@ -17,17 +16,22 @@ function containsLoopbackHost(rawUrl: string): boolean {
   }
 }
 
+function parseOptionalBoolean(name: string, rawValue: string | undefined, defaultValue: boolean): boolean {
+  if (rawValue === undefined || rawValue.trim() === '') {
+    return defaultValue;
+  }
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  throw new Error(`Configuration error: ${name} must be "true" or "false".`);
+}
+
 function requireStrongSecret(name: string, value: string | undefined, isProd: boolean): string {
   const trimmed = value?.trim();
   if (!trimmed || trimmed.length < 32) {
-    throw new Error(
-      `Security error: ${name} must be set and at least 32 characters long.`
-    );
+    throw new Error(`Security error: ${name} must be set and at least 32 characters long.`);
   }
-  if (
-    isProd &&
-    PLACEHOLDER_MARKERS.some((marker) => trimmed.toLowerCase().includes(marker))
-  ) {
+  if (isProd && PLACEHOLDER_MARKERS.some((marker) => trimmed.toLowerCase().includes(marker))) {
     throw new Error(
       `Security error: ${name} contains a placeholder value and cannot be used in production.`
     );
@@ -40,8 +44,7 @@ function requireProdUrl(name: string, value: string | undefined, allowNoScheme =
   if (!trimmed) {
     throw new Error(`Configuration error: ${name} must be explicitly set in production.`);
   }
-  const normalized =
-    allowNoScheme && !/^https?:\/\//i.test(trimmed) ? `http://${trimmed}` : trimmed;
+  const normalized = allowNoScheme && !/^https?:\/\//i.test(trimmed) ? `http://${trimmed}` : trimmed;
 
   let parsed: URL;
   try {
@@ -107,17 +110,43 @@ export function parseEnvConfig(env: Record<string, string | undefined>) {
     throw new Error('Configuration error: PORT must be a valid TCP port (1-65535).');
   }
 
-  const jwtSecret = requireStrongSecret('JWT_SECRET', env.JWT_SECRET, isProd);
-  const internalMlServiceKey = requireStrongSecret(
-    'INTERNAL_ML_SERVICE_KEY',
-    env.INTERNAL_ML_SERVICE_KEY,
-    isProd
-  );
+  const enableRedis = parseOptionalBoolean('ENABLE_REDIS', env.ENABLE_REDIS, true);
+  const enableMlService = parseOptionalBoolean('ENABLE_ML_SERVICE', env.ENABLE_ML_SERVICE, true);
 
-  if (isProd && jwtSecret === internalMlServiceKey) {
-    throw new Error(
-      'Security error: JWT_SECRET and INTERNAL_ML_SERVICE_KEY must be distinct in production.'
+  // Enforce strict single-instance safety whenever Redis coordination/adapter is disabled
+  const rawInstances = env.RENDER_INSTANCE_COUNT || env.INSTANCE_COUNT;
+  if (!enableRedis && rawInstances) {
+    const parsedInstances = parseInt(rawInstances, 10);
+    if (Number.isInteger(parsedInstances) && parsedInstances > 1) {
+      throw new Error(
+        'Configuration error: Single-instance mode (ENABLE_REDIS=false) cannot run with horizontal scaling (>1 instances).'
+      );
+    }
+  }
+
+  const jwtSecret = requireStrongSecret('JWT_SECRET', env.JWT_SECRET, isProd);
+
+  let internalMlServiceKey = '';
+  let mlServiceUrl = '';
+  if (enableMlService) {
+    internalMlServiceKey = requireStrongSecret(
+      'INTERNAL_ML_SERVICE_KEY',
+      env.INTERNAL_ML_SERVICE_KEY,
+      isProd
     );
+
+    if (isProd && jwtSecret === internalMlServiceKey) {
+      throw new Error(
+        'Security error: JWT_SECRET and INTERNAL_ML_SERVICE_KEY must be distinct in production.'
+      );
+    }
+
+    mlServiceUrl = isProd
+      ? requireProdUrl('ML_SERVICE_URL', env.ML_SERVICE_URL, true)
+      : (() => {
+          const raw = env.ML_SERVICE_URL?.trim() || 'http://localhost:8001';
+          return /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, '') : `http://${raw}`;
+        })();
   }
 
   const databaseUrl = isProd
@@ -125,20 +154,16 @@ export function parseEnvConfig(env: Record<string, string | undefined>) {
     : env.DATABASE_URL?.trim() ||
       'postgresql://auctioncraze:auctioncraze_dev_password@localhost:5433/auctioncraze_db?schema=public';
 
-  const redisUrl = isProd
-    ? requireProdUrl('REDIS_URL', env.REDIS_URL)
-    : env.REDIS_URL?.trim() || 'redis://localhost:6380';
+  let redisUrl = '';
+  if (enableRedis) {
+    redisUrl = isProd
+      ? requireProdUrl('REDIS_URL', env.REDIS_URL)
+      : env.REDIS_URL?.trim() || 'redis://localhost:6380';
 
-  if (!/^rediss?:\/\//i.test(redisUrl)) {
-    throw new Error('Configuration error: REDIS_URL must use redis:// or rediss:// scheme.');
+    if (!/^rediss?:\/\//i.test(redisUrl)) {
+      throw new Error('Configuration error: REDIS_URL must use redis:// or rediss:// scheme.');
+    }
   }
-
-  const mlServiceUrl = isProd
-    ? requireProdUrl('ML_SERVICE_URL', env.ML_SERVICE_URL, true)
-    : (() => {
-        const raw = env.ML_SERVICE_URL?.trim() || 'http://localhost:8001';
-        return /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, '') : `http://${raw}`;
-      })();
 
   const guestSessionTtlSeconds = parseInt(env.GUEST_SESSION_TTL_SECONDS || '604800', 10);
   if (!Number.isInteger(guestSessionTtlSeconds) || guestSessionTtlSeconds < 60) {
@@ -148,6 +173,8 @@ export function parseEnvConfig(env: Record<string, string | undefined>) {
   return {
     port,
     nodeEnv,
+    enableRedis,
+    enableMlService,
     corsOrigins: parseCorsOrigins(env, isProd),
     trustProxyHops: parseTrustProxyHops(env.TRUST_PROXY_HOPS, isProd),
     databaseUrl,

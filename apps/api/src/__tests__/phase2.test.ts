@@ -9,7 +9,8 @@ import {
   SOCKET_EVENTS
 } from '@auctioncraze/shared';
 import { createApp } from '../app';
-import { connectRedis, disconnectRedis, redis } from '../lib/redis';
+import { clearRateLimitEntriesForTest } from '../lib/coordinationStore';
+import { connectRedis, disconnectRedis } from '../lib/redis';
 import { closeSocketServer, setupSocketServer } from '../sockets/socketServer';
 
 interface GuestClient {
@@ -71,8 +72,7 @@ function waitForEvent<T = any>(socket: Socket, eventName: string, timeoutMs = 40
 async function runPhase2Tests() {
   await prisma.$connect();
   await connectRedis();
-  const rlKeys = await redis.keys('rl:*');
-  if (rlKeys.length > 0) await redis.del(...rlKeys);
+  await clearRateLimitEntriesForTest('rl:*');
 
   const app = createApp();
   const server = http.createServer(app);

@@ -45,10 +45,25 @@ export async function safeQuitRedis(client: Redis | null, label: string): Promis
   }
 }
 
-export const redis = new Redis(config.redisUrl, createRedisClientOptions('Primary'));
-attachRedisLifecycleLogging(redis, 'Primary');
+export const redis = new Redis(
+  config.redisUrl || 'redis://127.0.0.1:6380',
+  createRedisClientOptions('Primary', {
+    ...(config.enableRedis ? {} : { retryStrategy: () => null })
+  })
+);
+
+if (config.enableRedis) {
+  attachRedisLifecycleLogging(redis, 'Primary');
+} else {
+  // Prevent accidental unhandled error emissions when Redis is intentionally disabled
+  redis.on('error', () => {});
+}
 
 export async function connectRedis(): Promise<void> {
+  if (!config.enableRedis) {
+    console.log('ℹ️  Redis disabled (single-instance memory mode active).');
+    return;
+  }
   if (redis.status === 'wait') {
     await redis.connect();
   }
@@ -58,7 +73,10 @@ export async function connectRedis(): Promise<void> {
   }
 }
 
-export async function checkRedisHealth(): Promise<boolean> {
+export async function checkRedisHealth(): Promise<boolean | null> {
+  if (!config.enableRedis) {
+    return null;
+  }
   try {
     const pong = await redis.ping();
     return pong === 'PONG';
@@ -68,5 +86,6 @@ export async function checkRedisHealth(): Promise<boolean> {
 }
 
 export async function disconnectRedis(): Promise<void> {
+  if (!config.enableRedis) return;
   await safeQuitRedis(redis, 'Primary');
 }

@@ -3,13 +3,14 @@ import http from 'node:http';
 import { prisma } from '@auctioncraze/database';
 import { RoomRole, RoomStatus, RoomVisibility } from '@auctioncraze/shared';
 import { createApp } from '../app';
-import { connectRedis, disconnectRedis, redis } from '../lib/redis';
+import { config } from '../config/env';
+import { clearRateLimitEntriesForTest } from '../lib/coordinationStore';
+import { connectRedis, disconnectRedis } from '../lib/redis';
 
 async function runPhase1Tests() {
   await prisma.$connect();
   await connectRedis();
-  const rlKeys = await redis.keys('rl:*');
-  if (rlKeys.length > 0) await redis.del(...rlKeys);
+  await clearRateLimitEntriesForTest('rl:*');
 
   const app = createApp();
   const server = http.createServer(app);
@@ -31,7 +32,7 @@ async function runPhase1Tests() {
     const healthBody: any = await healthRes.json();
     assert.equal(healthBody.status, 'healthy');
     assert.equal(healthBody.dependencies.postgres, 'up');
-    assert.equal(healthBody.dependencies.redis, 'up');
+    assert.equal(healthBody.dependencies.redis, config.enableRedis ? 'up' : 'disabled');
     console.log('✅ Test 1: /health verified PostgreSQL & Redis connectivity');
 
     // 2. Unauthenticated room creation must be rejected (401)

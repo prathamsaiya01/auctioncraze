@@ -21,11 +21,13 @@ export function SquadIntelligencePanel({
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isMlDisabled, setIsMlDisabled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setIsMlDisabled(false);
 
     const req =
       mode === 'STRENGTH'
@@ -39,7 +41,10 @@ export function SquadIntelligencePanel({
         if (!cancelled) setData(res.data);
       })
       .catch((err: any) => {
-        if (!cancelled) setError(err?.message || 'Unable to compute squad intelligence.');
+        if (!cancelled) {
+          setIsMlDisabled(err?.code === 'ML_SERVICE_DISABLED');
+          setError(err?.message || 'Unable to compute squad intelligence.');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -67,7 +72,11 @@ export function SquadIntelligencePanel({
         <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
         <div>
           <p className="font-semibold">
-            {mode === 'PLAYING_XI' ? 'Playing XI Not Yet Formable' : 'Team Strength Unavailable'}
+            {isMlDisabled
+              ? 'ML Intelligence Disabled in Zero-Cost Mode'
+              : mode === 'PLAYING_XI'
+              ? 'Playing XI Not Yet Formable'
+              : 'Team Strength Unavailable'}
           </p>
           <p className="text-amber-200/80 mt-0.5">{error || 'Insufficient squad data.'}</p>
         </div>

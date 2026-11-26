@@ -8,7 +8,11 @@ import {
   formatFranchiseDisplayName
 } from '@auctioncraze/shared';
 import { AppError } from '../../middleware/errorHandler';
-import { redis } from '../../lib/redis';
+import {
+  getExpiringValue,
+  incrementCounter,
+  setExpiringValue
+} from '../../lib/coordinationStore';
 import { emitToRoom } from '../../sockets/socketServer';
 
 function sanitizeChatMessage(raw: string): string {
@@ -146,10 +150,7 @@ export class ChatService {
 
     // Per-session per-room sliding fixed window rate limit (max 8 msgs / 10s)
     const rateKey = `chat:rl:${normalized}:${input.guestSessionId}`;
-    const count = await redis.incr(rateKey);
-    if (count === 1) {
-      await redis.expire(rateKey, 10);
-    }
+    const count = await incrementCounter(rateKey, 10);
     if (count > 8) {
       throw new AppError('Slow down! Chat rate limit exceeded.', 429, 'CHAT_RATE_LIMITED');
     }
@@ -157,11 +158,11 @@ export class ChatService {
     // Basic anti-spam: disallow identical back-to-back text within 3 seconds
     const msgHash = crypto.createHash('sha1').update(cleanText.toLowerCase()).digest('hex');
     const spamKey = `chat:dup:${normalized}:${input.guestSessionId}`;
-    const prevHash = await redis.get(spamKey);
+    const prevHash = await getExpiringValue(spamKey);
     if (prevHash === msgHash) {
       throw new AppError('Duplicate spam message blocked. Wait a moment before repeating.', 429, 'CHAT_SPAM_BLOCKED');
     }
-    await redis.set(spamKey, msgHash, 'EX', 3);
+    await setExpiringValue(spamKey, msgHash, 3);
 
     const ownedFranchise = participant.franchiseId
       ? room.franchises.find((f) => f.id === participant.franchiseId)

@@ -11,20 +11,30 @@ async function bootstrap() {
   console.log('✅ PostgreSQL connected.');
 
   await connectRedis();
-  console.log('✅ Redis connected.');
+  if (config.enableRedis) {
+    console.log('✅ Redis connected.');
+  }
 
   const app = createApp();
   const server = http.createServer(app);
 
   await setupSocketServer(server);
-  console.log('✅ Socket.IO server + Redis adapter initialized.');
+  console.log(
+    config.enableRedis
+      ? '✅ Socket.IO server + Redis adapter initialized.'
+      : '✅ Socket.IO server initialized (single-instance memory adapter).'
+  );
 
   AuctionTimerManager.start(250);
-  console.log('✅ Server-authoritative Redis auction timer engine started.');
+  console.log(
+    config.enableRedis
+      ? '✅ Server-authoritative Redis auction timer engine started.'
+      : '✅ Server-authoritative in-process auction timer engine started (zero idle DB polling).'
+  );
 
   server.listen(config.port, () => {
     console.log(
-      `🚀 AuctionCraze API listening on port ${config.port} (${config.nodeEnv}, trustProxyHops=${config.trustProxyHops}).`
+      `🚀 AuctionCraze API listening on port ${config.port} (${config.nodeEnv}, redis=${config.enableRedis}, ml=${config.enableMlService}, trustProxyHops=${config.trustProxyHops}).`
     );
   });
 

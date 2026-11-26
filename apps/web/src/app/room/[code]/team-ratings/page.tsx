@@ -200,9 +200,13 @@ export default function PostAuctionTeamRatingsPage() {
           <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-amber-400 flex items-center justify-center mx-auto">
             <Lock className="w-6 h-6" />
           </div>
-          <Badge tone="unsold">RESTRICTED ACCESS</Badge>
+          <Badge tone="unsold">
+            {authError?.includes('zero-cost mode') ? 'ML SERVICE DISABLED' : 'RESTRICTED ACCESS'}
+          </Badge>
           <h1 className="font-display text-2xl font-extrabold text-white tracking-wide">
-            POST-AUCTION TEAM RATINGS UNAVAILABLE
+            {authError?.includes('zero-cost mode')
+              ? 'ML TEAM RATINGS DISABLED IN ZERO-COST MODE'
+              : 'POST-AUCTION TEAM RATINGS UNAVAILABLE'}
           </h1>
           <p className="text-xs text-stadium-muted leading-relaxed">
             {authError || 'Post-auction franchise analytics are restricted to authorized room franchise owners and the host.'}

@@ -1,10 +1,19 @@
 import { LotStatus as DbLotStatus, RoomStatus as DbRoomStatus, prisma } from '@auctioncraze/database';
 import { SOCKET_EVENTS } from '@auctioncraze/shared';
+import { config } from '../../config/env';
 import { redis } from '../../lib/redis';
 import { emitToRoom } from '../../sockets/socketServer';
 import { appendRoomEvent, lockRoomByCode } from '../rooms/roomHelpers';
 
 const ACTIVE_TIMERS_ZSET = 'auction:active_timers';
+
+interface InMemoryTimerState {
+  roomCode: string;
+  lotId: string;
+  status: 'RUNNING' | 'PAUSED';
+  deadlineMs?: number;
+  remainingMs?: number;
+}
 
 function timerKey(roomCode: string): string {
   return `auction:timer:${roomCode.toUpperCase()}`;
@@ -14,15 +23,146 @@ function closeLockKey(lotId: string): string {
   return `lock:timer-close:${lotId}`;
 }
 
+async function closeLotInsideTransaction(roomCode: string, nowMs: number) {
+  return prisma.$transaction(async (tx) => {
+    const { id: roomId } = await lockRoomByCode(tx, roomCode);
+    const room = await tx.room.findUnique({ where: { id: roomId } });
+    if (
+      !room ||
+      room.status !== DbRoomStatus.LIVE ||
+      room.isPaused ||
+      !room.currentLotId ||
+      room.timerDeadlineMs === null
+    ) {
+      return { action: 'IGNORE' as const };
+    }
+
+    if (Number(room.timerDeadlineMs) > nowMs) {
+      return {
+        action: 'RESCHEDULE' as const,
+        lotId: room.currentLotId,
+        deadlineMs: Number(room.timerDeadlineMs)
+      };
+    }
+
+    const lot = await tx.roomPlayerLot.findUnique({
+      where: { id: room.currentLotId },
+      include: { player: true }
+    });
+
+    if (!lot || lot.status !== DbLotStatus.ACTIVE) {
+      return { action: 'CLEAR' as const };
+    }
+
+    const closedAt = new Date(nowMs);
+    await tx.roomPlayerLot.update({
+      where: { id: lot.id },
+      data: {
+        status: DbLotStatus.BIDDING_CLOSED,
+        biddingClosedAt: closedAt
+      }
+    });
+
+    const nextVersion = room.version + 1;
+    await tx.room.update({
+      where: { id: room.id },
+      data: {
+        timerDeadlineMs: null,
+        timerRemainingMs: 0,
+        version: nextVersion
+      }
+    });
+
+    await appendRoomEvent(tx, room.id, nextVersion, SOCKET_EVENTS.BIDDING_CLOSED, {
+      lotId: lot.id,
+      playerId: lot.playerId,
+      playerName: lot.player.fullName,
+      currentBidLakhs: lot.currentBidLakhs,
+      winningFranchiseId: lot.winningFranchiseId,
+      closedAt: closedAt.toISOString()
+    });
+
+    return {
+      action: 'CLOSED' as const,
+      lotId: lot.id,
+      currentBidLakhs: lot.currentBidLakhs,
+      winningFranchiseId: lot.winningFranchiseId,
+      closedAt: closedAt.toISOString()
+    };
+  });
+}
+
 export class AuctionTimerManager {
   private static intervalId: NodeJS.Timeout | null = null;
+  private static tickIntervalMs = 250;
+  private static isStarted = false;
   private static isTicking = false;
   private static lastSyncPulseByRoom = new Map<string, number>();
   private static lastDbSweepMs = 0;
   private static redisReadyHandler: (() => void) | null = null;
 
+  // Single-instance in-memory state when ENABLE_REDIS=false (zero idle Postgres polling)
+  private static memoryTimers = new Map<string, InMemoryTimerState>();
+  private static closingRooms = new Set<string>();
+
+  private static hasRunningMemoryTimers(): boolean {
+    for (const entry of AuctionTimerManager.memoryTimers.values()) {
+      if (entry.status === 'RUNNING') return true;
+    }
+    return false;
+  }
+
+  private static ensureMemorySchedulerRunning(): void {
+    if (config.enableRedis || !AuctionTimerManager.isStarted) return;
+    if (AuctionTimerManager.intervalId) return;
+    if (!AuctionTimerManager.hasRunningMemoryTimers()) return;
+
+    AuctionTimerManager.intervalId = setInterval(() => {
+      AuctionTimerManager.runTickSafely();
+    }, AuctionTimerManager.tickIntervalMs);
+  }
+
+  private static stopMemorySchedulerIfIdle(): void {
+    if (config.enableRedis) return;
+    if (AuctionTimerManager.intervalId && !AuctionTimerManager.hasRunningMemoryTimers()) {
+      clearInterval(AuctionTimerManager.intervalId);
+      AuctionTimerManager.intervalId = null;
+    }
+  }
+
+  private static async runTickSafely(): Promise<void> {
+    if (AuctionTimerManager.isTicking) return;
+    AuctionTimerManager.isTicking = true;
+    try {
+      await AuctionTimerManager.processExpiredTimers();
+    } catch (err) {
+      console.error('[TimerManager] Tick error:', err);
+    } finally {
+      AuctionTimerManager.isTicking = false;
+    }
+  }
+
+  static getMemoryTimerState(roomCode: string): InMemoryTimerState | null {
+    return AuctionTimerManager.memoryTimers.get(roomCode.trim().toUpperCase()) ?? null;
+  }
+
+  static isSchedulerLoopActive(): boolean {
+    return AuctionTimerManager.intervalId !== null;
+  }
+
   static async setRunningTimer(roomCode: string, lotId: string, deadlineMs: number): Promise<void> {
     const code = roomCode.toUpperCase();
+    if (!config.enableRedis) {
+      AuctionTimerManager.memoryTimers.set(code, {
+        roomCode: code,
+        lotId,
+        status: 'RUNNING',
+        deadlineMs
+      });
+      AuctionTimerManager.ensureMemorySchedulerRunning();
+      return;
+    }
+
     await redis
       .multi()
       .set(
@@ -37,6 +177,17 @@ export class AuctionTimerManager {
 
   static async setPausedTimer(roomCode: string, lotId: string, remainingMs: number): Promise<void> {
     const code = roomCode.toUpperCase();
+    if (!config.enableRedis) {
+      AuctionTimerManager.memoryTimers.set(code, {
+        roomCode: code,
+        lotId,
+        status: 'PAUSED',
+        remainingMs
+      });
+      AuctionTimerManager.stopMemorySchedulerIfIdle();
+      return;
+    }
+
     await redis
       .multi()
       .zrem(ACTIVE_TIMERS_ZSET, code)
@@ -51,13 +202,25 @@ export class AuctionTimerManager {
 
   static async clearTimer(roomCode: string): Promise<void> {
     const code = roomCode.toUpperCase();
+    AuctionTimerManager.lastSyncPulseByRoom.delete(code);
+
+    if (!config.enableRedis) {
+      AuctionTimerManager.memoryTimers.delete(code);
+      AuctionTimerManager.stopMemorySchedulerIfIdle();
+      return;
+    }
+
     await redis.multi().zrem(ACTIVE_TIMERS_ZSET, code).del(timerKey(code)).exec();
   }
 
   /**
-   * Restores Redis timer state from PostgreSQL after an API server restart.
+   * Restores timer state from PostgreSQL after an API server restart (or Redis reconnect).
    */
   static async recoverActiveTimersOnBoot(): Promise<number> {
+    if (!config.enableRedis) {
+      AuctionTimerManager.memoryTimers.clear();
+    }
+
     const liveRooms = await prisma.room.findMany({
       where: {
         status: { in: [DbRoomStatus.LIVE, DbRoomStatus.PAUSED] },
@@ -101,10 +264,14 @@ export class AuctionTimerManager {
 
   /**
    * Transitions expired ACTIVE lots to BIDDING_CLOSED without auto-selling.
-   * Uses a Redis SET NX lock to prevent duplicate closes across concurrent workers.
+   * Uses a Redis SET NX lock in distributed mode or an in-process guard set in single-instance mode.
    */
   static async processExpiredTimers(nowMs = Date.now()): Promise<string[]> {
-    // Periodic PostgreSQL safety net every 3s: rehydrate missing Redis timers if Redis restarted
+    if (!config.enableRedis) {
+      return AuctionTimerManager.processMemoryExpiredTimers(nowMs);
+    }
+
+    // Periodic PostgreSQL safety net every 3s in Redis mode: rehydrate missing Redis timers if Redis restarted
     if (nowMs - AuctionTimerManager.lastDbSweepMs >= 3000) {
       AuctionTimerManager.lastDbSweepMs = nowMs;
       try {
@@ -145,72 +312,7 @@ export class AuctionTimerManager {
         const acquired = await redis.set(closeLockKey(lotHint), '1', 'PX', 5000, 'NX');
         if (!acquired) continue;
 
-        const outcome = await prisma.$transaction(async (tx) => {
-          const { id: roomId } = await lockRoomByCode(tx, roomCode);
-          const room = await tx.room.findUnique({ where: { id: roomId } });
-          if (
-            !room ||
-            room.status !== DbRoomStatus.LIVE ||
-            room.isPaused ||
-            !room.currentLotId ||
-            room.timerDeadlineMs === null
-          ) {
-            return { action: 'IGNORE' as const };
-          }
-
-          if (Number(room.timerDeadlineMs) > nowMs) {
-            return {
-              action: 'RESCHEDULE' as const,
-              lotId: room.currentLotId,
-              deadlineMs: Number(room.timerDeadlineMs)
-            };
-          }
-
-          const lot = await tx.roomPlayerLot.findUnique({
-            where: { id: room.currentLotId },
-            include: { player: true }
-          });
-
-          if (!lot || lot.status !== DbLotStatus.ACTIVE) {
-            return { action: 'CLEAR' as const };
-          }
-
-          const closedAt = new Date(nowMs);
-          await tx.roomPlayerLot.update({
-            where: { id: lot.id },
-            data: {
-              status: DbLotStatus.BIDDING_CLOSED,
-              biddingClosedAt: closedAt
-            }
-          });
-
-          const nextVersion = room.version + 1;
-          await tx.room.update({
-            where: { id: room.id },
-            data: {
-              timerDeadlineMs: null,
-              timerRemainingMs: 0,
-              version: nextVersion
-            }
-          });
-
-          await appendRoomEvent(tx, room.id, nextVersion, SOCKET_EVENTS.BIDDING_CLOSED, {
-            lotId: lot.id,
-            playerId: lot.playerId,
-            playerName: lot.player.fullName,
-            currentBidLakhs: lot.currentBidLakhs,
-            winningFranchiseId: lot.winningFranchiseId,
-            closedAt: closedAt.toISOString()
-          });
-
-          return {
-            action: 'CLOSED' as const,
-            lotId: lot.id,
-            currentBidLakhs: lot.currentBidLakhs,
-            winningFranchiseId: lot.winningFranchiseId,
-            closedAt: closedAt.toISOString()
-          };
-        });
+        const outcome = await closeLotInsideTransaction(roomCode, nowMs);
 
         if (outcome.action === 'RESCHEDULE') {
           await AuctionTimerManager.setRunningTimer(roomCode, outcome.lotId, outcome.deadlineMs);
@@ -277,11 +379,91 @@ export class AuctionTimerManager {
     return closedCodes;
   }
 
+  private static async processMemoryExpiredTimers(nowMs: number): Promise<string[]> {
+    const entries = Array.from(AuctionTimerManager.memoryTimers.values());
+    const closedCodes: string[] = [];
+
+    for (const entry of entries) {
+      if (entry.status !== 'RUNNING' || entry.deadlineMs === undefined) continue;
+
+      if (entry.deadlineMs <= nowMs) {
+        if (AuctionTimerManager.closingRooms.has(entry.roomCode)) continue;
+        AuctionTimerManager.closingRooms.add(entry.roomCode);
+
+        try {
+          const outcome = await closeLotInsideTransaction(entry.roomCode, nowMs);
+          if (outcome.action === 'RESCHEDULE') {
+            await AuctionTimerManager.setRunningTimer(
+              entry.roomCode,
+              outcome.lotId,
+              outcome.deadlineMs
+            );
+          } else if (outcome.action === 'IGNORE' || outcome.action === 'CLEAR') {
+            await AuctionTimerManager.clearTimer(entry.roomCode);
+          } else if (outcome.action === 'CLOSED') {
+            await AuctionTimerManager.clearTimer(entry.roomCode);
+            emitToRoom(entry.roomCode, SOCKET_EVENTS.BIDDING_CLOSED, {
+              roomCode: entry.roomCode,
+              lotId: outcome.lotId,
+              currentBidLakhs: outcome.currentBidLakhs,
+              winningFranchiseId: outcome.winningFranchiseId,
+              closedAt: outcome.closedAt
+            });
+            emitToRoom(entry.roomCode, SOCKET_EVENTS.TIMER_UPDATED, {
+              roomCode: entry.roomCode,
+              lotId: outcome.lotId,
+              deadlineMs: null,
+              remainingSeconds: 0,
+              isPaused: false,
+              serverTimeMs: nowMs
+            });
+            closedCodes.push(entry.roomCode);
+          }
+        } catch (err: any) {
+          if (err?.code === 'ROOM_NOT_FOUND') {
+            await AuctionTimerManager.clearTimer(entry.roomCode);
+          } else {
+            console.error(
+              `[TimerManager] Error processing expired in-memory timer for ${entry.roomCode}:`,
+              err
+            );
+          }
+        } finally {
+          AuctionTimerManager.closingRooms.delete(entry.roomCode);
+        }
+      } else {
+        const lastPulse = AuctionTimerManager.lastSyncPulseByRoom.get(entry.roomCode) ?? 0;
+        if (nowMs - lastPulse >= 5000) {
+          AuctionTimerManager.lastSyncPulseByRoom.set(entry.roomCode, nowMs);
+          emitToRoom(entry.roomCode, SOCKET_EVENTS.TIMER_UPDATED, {
+            roomCode: entry.roomCode,
+            lotId: entry.lotId,
+            deadlineMs: entry.deadlineMs,
+            remainingSeconds: Math.max(0, Math.ceil((entry.deadlineMs - nowMs) / 1000)),
+            isPaused: false,
+            serverTimeMs: nowMs
+          });
+        }
+      }
+    }
+
+    AuctionTimerManager.stopMemorySchedulerIfIdle();
+    return closedCodes;
+  }
+
   static start(intervalMs = 250): void {
-    if (AuctionTimerManager.intervalId) return;
+    AuctionTimerManager.tickIntervalMs = intervalMs;
+    if (AuctionTimerManager.isStarted) return;
+    AuctionTimerManager.isStarted = true;
+
     AuctionTimerManager.recoverActiveTimersOnBoot().catch((err) => {
       console.error('[TimerManager] Boot recovery failed:', err);
     });
+
+    if (!config.enableRedis) {
+      AuctionTimerManager.ensureMemorySchedulerRunning();
+      return;
+    }
 
     if (!AuctionTimerManager.redisReadyHandler) {
       AuctionTimerManager.redisReadyHandler = () => {
@@ -292,20 +474,13 @@ export class AuctionTimerManager {
       redis.on('ready', AuctionTimerManager.redisReadyHandler);
     }
 
-    AuctionTimerManager.intervalId = setInterval(async () => {
-      if (AuctionTimerManager.isTicking) return;
-      AuctionTimerManager.isTicking = true;
-      try {
-        await AuctionTimerManager.processExpiredTimers();
-      } catch (err) {
-        console.error('[TimerManager] Tick error:', err);
-      } finally {
-        AuctionTimerManager.isTicking = false;
-      }
+    AuctionTimerManager.intervalId = setInterval(() => {
+      AuctionTimerManager.runTickSafely();
     }, intervalMs);
   }
 
   static stop(): void {
+    AuctionTimerManager.isStarted = false;
     if (AuctionTimerManager.intervalId) {
       clearInterval(AuctionTimerManager.intervalId);
       AuctionTimerManager.intervalId = null;
@@ -314,5 +489,8 @@ export class AuctionTimerManager {
       redis.off('ready', AuctionTimerManager.redisReadyHandler);
       AuctionTimerManager.redisReadyHandler = null;
     }
+    AuctionTimerManager.memoryTimers.clear();
+    AuctionTimerManager.closingRooms.clear();
+    AuctionTimerManager.lastSyncPulseByRoom.clear();
   }
 }

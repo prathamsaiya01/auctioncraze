@@ -50,15 +50,17 @@ export function createApp(options?: CreateAppOptions): express.Application {
     } catch {
       dbOk = false;
     }
-    const redisOk = await checkRedisHealth();
+    const redisHealth = await checkRedisHealth();
 
-    const healthy = dbOk && redisOk;
+    const healthy = dbOk && (redisHealth === null || redisHealth === true);
     res.status(healthy ? 200 : 503).json({
       status: healthy ? 'healthy' : 'degraded',
       service: 'auctioncraze-api',
+      mode: config.enableRedis ? 'redis-distributed' : 'single-instance-memory',
       dependencies: {
         postgres: dbOk ? 'up' : 'down',
-        redis: redisOk ? 'up' : 'down'
+        redis: redisHealth === null ? 'disabled' : redisHealth ? 'up' : 'down',
+        ml: config.enableMlService ? 'enabled' : 'disabled'
       },
       timestamp: new Date().toISOString()
     });

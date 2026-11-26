@@ -34,6 +34,14 @@ export async function callMlService<T = unknown>(
   path: string,
   options?: { method?: string; body?: unknown }
 ): Promise<T> {
+  if (!config.enableMlService) {
+    throw new AppError(
+      'Cricket intelligence (ML) is disabled in zero-cost mode. Live auctions, rooms, trading, chat, and seasons remain fully active.',
+      503,
+      'ML_SERVICE_DISABLED'
+    );
+  }
+
   const internalKey = config.internalMlServiceKey;
   if (!internalKey || internalKey.length < 32) {
     throw new AppError(
