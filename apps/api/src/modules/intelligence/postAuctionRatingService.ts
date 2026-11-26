@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { RoomStatus as DbRoomStatus, prisma } from '@auctioncraze/database';
+import { formatFranchiseDisplayName } from '@auctioncraze/shared';
 import { AppError } from '../../middleware/errorHandler';
 import {
   ActiveOwnerContext,
@@ -234,8 +235,27 @@ async function computeAndPersistSnapshot(
     !forceRecalculate &&
     latestSnapshot.rosterFingerprint === rosterFingerprint
   ) {
+    const cached = latestSnapshot.summaryJson as unknown as PostAuctionSnapshotSummary;
+    const liveById = new Map(room.franchises.map((f) => [f.id, f]));
+    const updatedRankings = (cached.overallRankings || []).map((row: any) => {
+      const f = liveById.get(row.franchiseId);
+      const disp = f
+        ? formatFranchiseDisplayName(f.name, f.presetCode, f.customSuffix, !!room.allowCustomTeamName)
+        : row.franchiseDisplayName || row.franchiseName;
+      return { ...row, franchiseDisplayName: disp };
+    });
+    const updatedReportsById: Record<string, any> = {};
+    for (const [fId, rep] of Object.entries(cached.franchiseReportsById || {})) {
+      const f = liveById.get(fId);
+      const disp = f
+        ? formatFranchiseDisplayName(f.name, f.presetCode, f.customSuffix, !!room.allowCustomTeamName)
+        : (rep as any).franchiseDisplayName || (rep as any).franchiseName;
+      updatedReportsById[fId] = { ...(rep as any), franchiseDisplayName: disp };
+    }
     return {
-      ...(latestSnapshot.summaryJson as unknown as PostAuctionSnapshotSummary),
+      ...cached,
+      overallRankings: updatedRankings,
+      franchiseReportsById: updatedReportsById,
       snapshotVersion: latestSnapshot.snapshotVersion,
       rosterFingerprint: latestSnapshot.rosterFingerprint,
       calculatedAt: latestSnapshot.calculatedAt.toISOString()
@@ -269,6 +289,12 @@ async function computeAndPersistSnapshot(
         franchiseId: item.franchise.id,
         franchiseCode: item.franchise.presetCode,
         franchiseName: item.franchise.name,
+        franchiseDisplayName: formatFranchiseDisplayName(
+          item.franchise.name,
+          item.franchise.presetCode,
+          item.franchise.customSuffix,
+          !!room.allowCustomTeamName
+        ),
         primaryColor: item.franchise.primaryColor,
         secondaryColor: item.franchise.secondaryColor,
         ownerDisplayName: item.ownerDisplayName,
@@ -318,6 +344,7 @@ async function computeAndPersistSnapshot(
     franchiseId: r.franchiseId,
     franchiseCode: r.franchiseCode,
     franchiseName: r.franchiseName,
+    franchiseDisplayName: r.franchiseDisplayName ?? r.franchiseName,
     primaryColor: r.primaryColor,
     secondaryColor: r.secondaryColor,
     ownerDisplayName: r.ownerDisplayName,
@@ -494,7 +521,7 @@ export class PostAuctionRatingService {
         roomId: ctx.room.id,
         OR: [{ id: key }, { presetCode: key.toUpperCase() }]
       },
-      select: { id: true, presetCode: true, name: true }
+      select: { id: true, presetCode: true, name: true, customSuffix: true }
     });
 
     if (!targetFranchise) {

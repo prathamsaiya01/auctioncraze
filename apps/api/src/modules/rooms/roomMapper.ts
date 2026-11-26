@@ -11,7 +11,8 @@ import {
   RoomDetailDto,
   RoomRole,
   RoomStatus,
-  RoomVisibility
+  RoomVisibility,
+  formatFranchiseDisplayName
 } from '@auctioncraze/shared';
 
 export function resolveBidTiers(raw: unknown): BidTierConfig[] {
@@ -183,6 +184,9 @@ export function mapRoomToDetailDto(room: any, includeInviteToken = false): RoomD
       extensionThresholdSeconds: room.extensionThresholdSeconds,
       allowHostSkip: room.allowHostSkip,
       allowTeamPurseAdjustments: room.allowTeamPurseAdjustments,
+      allowPlayerTrades: !!room.allowPlayerTrades,
+      allowCustomTeamName: !!room.allowCustomTeamName,
+      allowLateJoin: room.allowLateJoin ?? true,
       retentionEnabled: room.retentionEnabled,
       maxRetentionsPerFranchise: room.maxRetentionsPerFranchise,
       maxOverseasRetentions: room.maxOverseasRetentions
@@ -193,6 +197,13 @@ export function mapRoomToDetailDto(room: any, includeInviteToken = false): RoomD
         id: f.id,
         presetCode: f.presetCode,
         name: f.name,
+        customSuffix: f.customSuffix ?? null,
+        displayName: formatFranchiseDisplayName(
+          f.name,
+          f.presetCode,
+          f.customSuffix,
+          !!room.allowCustomTeamName
+        ),
         abbreviation: f.abbreviation,
         primaryColor: f.primaryColor,
         secondaryColor: f.secondaryColor,

@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import { FranchiseEmblem } from '@/components/ui/FranchiseEmblem';
 import { Modal } from '@/components/ui/Modal';
 import { AuctionConfigPanel } from '@/components/room/AuctionConfigPanel';
+import { FranchiseNicknameEditor } from '@/components/room/FranchiseNicknameEditor';
 import {
   ArrowLeft,
   Check,
@@ -45,7 +46,7 @@ import {
   WifiOff
 } from 'lucide-react';
 
-type SocketStatus = 'CONNECTED' | 'CONNECTING' | 'DISCONNECTED';
+type SocketStatus = 'CONNECTED' | 'RECONNECTING' | 'SYNCHRONIZING' | 'DISCONNECTED';
 
 interface ActivityEntry {
   id: string;
@@ -173,20 +174,46 @@ export default function RoomLobbyPage() {
       return;
     }
 
-    setSocketStatus('CONNECTING');
+    setSocketStatus('SYNCHRONIZING');
     const socket = getRoomSocket(token);
 
+    const requestSync = () => {
+      if (!socket.connected) return;
+      setSocketStatus('SYNCHRONIZING');
+      socket.emit(SOCKET_EVENTS.ROOM_JOIN, { roomCode: room.code }, (ack: any) => {
+        if (ack?.ok) {
+          setSocketStatus('CONNECTED');
+        }
+      });
+    };
+
     const onConnect = () => {
-      setSocketStatus('CONNECTED');
-      socket.emit(SOCKET_EVENTS.ROOM_JOIN, { roomCode: room.code });
+      requestSync();
+    };
+
+    const onReconnectAttempt = () => {
+      setSocketStatus('RECONNECTING');
     };
 
     const onDisconnect = () => {
       setSocketStatus('DISCONNECTED');
     };
 
+    const onVisibilityOrOnline = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (socket.connected) {
+        setSocketStatus('SYNCHRONIZING');
+        socket.emit(SOCKET_EVENTS.SYNC_REQUEST, { roomCode: room.code }, (ack: any) => {
+          if (ack?.ok) setSocketStatus('CONNECTED');
+        });
+      } else {
+        setSocketStatus('RECONNECTING');
+        socket.connect();
+      }
+    };
+
     const onRoomState = (snapshot: RoomDetailDto) => {
-      setRoom(snapshot);
+      setRoom((prev) => (prev && snapshot.version < prev.version ? prev : snapshot));
       setSocketStatus('CONNECTED');
     };
 
@@ -271,22 +298,38 @@ export default function RoomLobbyPage() {
       }
     };
 
+    const onIdentityUpdated = (evt: any) => {
+      if (evt?.franchiseCode && evt?.displayName) {
+        pushActivity(`${evt.franchiseCode} updated identity to ${evt.displayName}`, 'gold');
+      }
+    };
+
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
+    socket.io.on('reconnect_attempt', onReconnectAttempt);
     socket.on(SOCKET_EVENTS.ROOM_STATE, onRoomState);
     socket.on(SOCKET_EVENTS.PARTICIPANT_JOINED, onJoined);
     socket.on(SOCKET_EVENTS.PARTICIPANT_LEFT, onLeft);
     socket.on(SOCKET_EVENTS.FRANCHISE_CLAIMED, onFranchiseClaimed);
     socket.on(SOCKET_EVENTS.FRANCHISE_RELEASED, onFranchiseReleased);
+    socket.on(SOCKET_EVENTS.FRANCHISE_IDENTITY_UPDATED, onIdentityUpdated);
     socket.on(SOCKET_EVENTS.PARTICIPANT_READY, onReady);
     socket.on(SOCKET_EVENTS.PARTICIPANT_NOT_READY, onNotReady);
     socket.on(SOCKET_EVENTS.HOST_CHANGED, onHostChanged);
     socket.on(SOCKET_EVENTS.PARTICIPANT_KICKED, onKicked);
     socket.on(SOCKET_EVENTS.ROOM_SETTINGS_UPDATED, onSettingsUpdated);
+    socket.on(SOCKET_EVENTS.ROOM_LIVE_SETTINGS_UPDATED, onSettingsUpdated);
     socket.on(SOCKET_EVENTS.AUCTION_CONFIG_UPDATED, onConfigUpdated);
     socket.on(SOCKET_EVENTS.AUCTION_CONFIG_FINALIZED, onConfigFinalized);
     socket.on(SOCKET_EVENTS.AUCTION_READINESS_CHANGED, onReadinessChanged);
     socket.on(SOCKET_EVENTS.AUCTION_STARTED, onAuctionStarted);
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityOrOnline);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', onVisibilityOrOnline);
+    }
 
     if (socket.connected) {
       onConnect();
@@ -295,20 +338,29 @@ export default function RoomLobbyPage() {
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
+      socket.io.off('reconnect_attempt', onReconnectAttempt);
       socket.off(SOCKET_EVENTS.ROOM_STATE, onRoomState);
       socket.off(SOCKET_EVENTS.PARTICIPANT_JOINED, onJoined);
       socket.off(SOCKET_EVENTS.PARTICIPANT_LEFT, onLeft);
       socket.off(SOCKET_EVENTS.FRANCHISE_CLAIMED, onFranchiseClaimed);
       socket.off(SOCKET_EVENTS.FRANCHISE_RELEASED, onFranchiseReleased);
+      socket.off(SOCKET_EVENTS.FRANCHISE_IDENTITY_UPDATED, onIdentityUpdated);
       socket.off(SOCKET_EVENTS.PARTICIPANT_READY, onReady);
       socket.off(SOCKET_EVENTS.PARTICIPANT_NOT_READY, onNotReady);
       socket.off(SOCKET_EVENTS.HOST_CHANGED, onHostChanged);
       socket.off(SOCKET_EVENTS.PARTICIPANT_KICKED, onKicked);
       socket.off(SOCKET_EVENTS.ROOM_SETTINGS_UPDATED, onSettingsUpdated);
+      socket.off(SOCKET_EVENTS.ROOM_LIVE_SETTINGS_UPDATED, onSettingsUpdated);
       socket.off(SOCKET_EVENTS.AUCTION_CONFIG_UPDATED, onConfigUpdated);
       socket.off(SOCKET_EVENTS.AUCTION_CONFIG_FINALIZED, onConfigFinalized);
       socket.off(SOCKET_EVENTS.AUCTION_READINESS_CHANGED, onReadinessChanged);
       socket.off(SOCKET_EVENTS.AUCTION_STARTED, onAuctionStarted);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityOrOnline);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', onVisibilityOrOnline);
+      }
     };
   }, [room?.code, myParticipant?.id, token, pushActivity, router]);
 
@@ -337,7 +389,11 @@ export default function RoomLobbyPage() {
         franchiseCode: joinAs === RoomRole.OWNER ? selectedFranchiseCode : undefined,
         inviteToken: inviteTokenInput || inviteFromUrl || undefined
       });
-      setRoom(res.data as RoomDetailDto);
+      const joinedRoom = res.data as RoomDetailDto;
+      setRoom(joinedRoom);
+      if (joinedRoom.status === RoomStatus.LIVE || joinedRoom.status === RoomStatus.PAUSED) {
+        router.push(`/room/${joinedRoom.code}/auction`);
+      }
     } catch (err: any) {
       setActionError(err.message || 'Unable to join room.');
     } finally {
@@ -624,16 +680,26 @@ export default function RoomLobbyPage() {
               </Button>
             </Link>
             {myParticipant && (
-              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-stadium-card border border-stadium-border text-[11px] font-mono">
+              <div
+                data-testid="lobby-connection-pill"
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-stadium-card border border-stadium-border text-[11px] font-mono"
+              >
                 {socketStatus === 'CONNECTED' ? (
                   <>
                     <Wifi className="w-3.5 h-3.5 text-signal-sold" />
-                    <span className="text-signal-sold">SYNCED</span>
+                    <span className="text-signal-sold">Connected</span>
+                  </>
+                ) : socketStatus === 'SYNCHRONIZING' ? (
+                  <>
+                    <Wifi className="w-3.5 h-3.5 text-electric-400 animate-spin" />
+                    <span className="text-electric-400">Synchronizing</span>
                   </>
                 ) : (
                   <>
                     <WifiOff className="w-3.5 h-3.5 text-signal-warn animate-pulse" />
-                    <span className="text-signal-warn">{socketStatus}</span>
+                    <span className="text-signal-warn">
+                      {socketStatus === 'RECONNECTING' ? 'Reconnecting' : 'Disconnected'}
+                    </span>
                   </>
                 )}
               </div>
@@ -802,13 +868,18 @@ export default function RoomLobbyPage() {
               <div>
                 <h2 className="font-display text-2xl font-bold text-white">JOIN THIS ROOM</h2>
                 <p className="text-xs text-stadium-muted">
-                  Pick an available IPL franchise below to compete, or join as a Spectator.
+                  {room.status === RoomStatus.LOBBY
+                    ? 'Pick an available IPL franchise below to compete, or join as a Spectator.'
+                    : room.settings.allowLateJoin
+                    ? 'Auction is live — claim an unclaimed franchise via late join, or join as a Spectator.'
+                    : 'Auction is live and Host disabled late franchise joining. Spectators may still enter.'}
                 </p>
               </div>
               <div className="flex gap-2">
                 <Button
                   type="button"
                   size="sm"
+                  disabled={room.status !== RoomStatus.LOBBY && !room.settings.allowLateJoin}
                   variant={joinAs === RoomRole.OWNER ? 'gold' : 'surface'}
                   onClick={() => setJoinAs(RoomRole.OWNER)}
                 >
@@ -915,29 +986,43 @@ export default function RoomLobbyPage() {
                       />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-bold text-white truncate">{f.name}</span>
+                          <span className="text-sm font-bold text-white truncate">{f.displayName}</span>
                         </div>
+                        {f.displayName !== f.name && (
+                          <div className="text-[10px] text-stadium-muted truncate">Official: {f.name}</div>
+                        )}
                         <div className="text-xs font-mono text-stadium-muted">
                           {(f.remainingPurseLakhs / 100).toFixed(0)} Cr Purse
                         </div>
                         {owner ? (
-                          <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
-                            <span
-                              className={`w-2 h-2 rounded-full shrink-0 ${
-                                owner.isConnected ? 'bg-signal-sold' : 'bg-stadium-muted/50'
-                              }`}
-                            />
-                            <span className="font-semibold text-gold-300 truncate flex items-center gap-1 min-w-0">
-                              {isOwnerHost && <Crown className="w-3 h-3 shrink-0" />}
-                              <span className="truncate">
-                                {owner.displayName}
-                                {isMine ? ' (You)' : ''}
+                          <div className="mt-1 space-y-1">
+                            <div className="flex items-center gap-1.5 text-xs min-w-0">
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  owner.isConnected ? 'bg-signal-sold' : 'bg-stadium-muted/50'
+                                }`}
+                              />
+                              <span className="font-semibold text-gold-300 truncate flex items-center gap-1 min-w-0">
+                                {isOwnerHost && <Crown className="w-3 h-3 shrink-0" />}
+                                <span className="truncate">
+                                  {owner.displayName}
+                                  {isMine ? ' (You)' : ''}
+                                </span>
                               </span>
-                            </span>
-                            {owner.isReady && (
-                              <Badge tone="sold" className="ml-1 shrink-0">
-                                READY
-                              </Badge>
+                              {owner.isReady && (
+                                <Badge tone="sold" className="ml-1 shrink-0">
+                                  READY
+                                </Badge>
+                              )}
+                            </div>
+                            {isMine && (
+                              <FranchiseNicknameEditor
+                                roomCode={room.code}
+                                presetCode={f.presetCode}
+                                currentSuffix={f.customSuffix}
+                                enabled={room.settings.allowCustomTeamName}
+                                onUpdated={() => fetchRoom()}
+                              />
                             )}
                           </div>
                         ) : (

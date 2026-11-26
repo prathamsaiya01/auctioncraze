@@ -1,4 +1,13 @@
-import { AuctionMode, CricketRole, LotStatus, RoomRole, RoomStatus, RoomVisibility } from './enums';
+import {
+  AuctionMode,
+  CricketRole,
+  LotStatus,
+  RoomRole,
+  RoomStatus,
+  RoomVisibility,
+  TradeDirection,
+  TradeStatus
+} from './enums';
 import { BidTierConfig } from './constants';
 
 export interface GuestSessionDto {
@@ -12,6 +21,8 @@ export interface RoomFranchiseDto {
   id: string;
   presetCode: string;
   name: string;
+  customSuffix: string | null;
+  displayName: string;
   abbreviation: string;
   primaryColor: string;
   secondaryColor: string;
@@ -53,6 +64,9 @@ export interface RoomSettingsDto {
   extensionThresholdSeconds: number;
   allowHostSkip: boolean;
   allowTeamPurseAdjustments: boolean;
+  allowPlayerTrades: boolean;
+  allowCustomTeamName: boolean;
+  allowLateJoin: boolean;
   retentionEnabled: boolean;
   maxRetentionsPerFranchise: number;
   maxOverseasRetentions: number;
@@ -182,6 +196,8 @@ export interface AuctionFranchiseStateDto {
   id: string;
   presetCode: string;
   name: string;
+  customSuffix: string | null;
+  displayName: string;
   abbreviation: string;
   primaryColor: string;
   secondaryColor: string;
@@ -203,6 +219,7 @@ export interface AuctionBidDto {
   roundNumber: number;
   franchiseId: string;
   franchiseCode: string;
+  franchiseDisplayName?: string;
   franchiseColor: string;
   participantId: string;
   bidderDisplayName: string;
@@ -225,6 +242,7 @@ export interface ActiveLotDetailDto {
   winningFranchiseId: string | null;
   winningFranchiseCode: string | null;
   winningFranchiseName: string | null;
+  winningFranchiseDisplayName: string | null;
   winningFranchiseColor: string | null;
   winningOwnerName: string | null;
   player: {
@@ -264,6 +282,7 @@ export interface AuctionResultItemDto {
   status: LotStatus;
   soldPriceLakhs: number | null;
   franchiseCode: string | null;
+  franchiseDisplayName?: string | null;
   franchiseColor: string | null;
   settledAt: string | null;
 }
@@ -401,4 +420,58 @@ export interface PlayerImportBatchDto {
   provenanceNotes: string | null;
   createdAt: string;
   rolledBackAt: string | null;
+}
+
+// -------------------------------------------------------------
+// PHASE 6D: FRANCHISE PLAYER TRADING CONTRACTS
+// -------------------------------------------------------------
+
+export interface TradeProposalItemDto {
+  id: string;
+  playerId: string;
+  playerName: string;
+  playingRole: CricketRole;
+  isOverseas: boolean;
+  sourceType: 'AUCTION' | 'RETENTION';
+  direction: TradeDirection;
+  fromFranchiseId: string;
+  fromFranchiseCode: string;
+  toFranchiseId: string;
+  toFranchiseCode: string;
+  priceLakhs: number;
+}
+
+export interface TradeProposalDto {
+  id: string;
+  roomId: string;
+  proposerFranchiseId: string;
+  proposerFranchiseCode: string;
+  proposerFranchiseDisplayName: string;
+  receiverFranchiseId: string;
+  receiverFranchiseCode: string;
+  receiverFranchiseDisplayName: string;
+  proposerOwnerName: string;
+  receiverOwnerName: string;
+  status: TradeStatus;
+  note: string | null;
+  failureReason: string | null;
+  expiresAt: string;
+  respondedAt: string | null;
+  executedAt: string | null;
+  createdAt: string;
+  outgoingPlayers: TradeProposalItemDto[];
+  incomingPlayers: TradeProposalItemDto[];
+}
+
+export interface TradeCenterStateDto {
+  roomCode: string;
+  allowPlayerTrades: boolean;
+  lifecyclePermitsTrading: boolean;
+  roomStatus: RoomStatus;
+  myFranchiseId: string;
+  myFranchiseCode: string;
+  myFranchiseDisplayName: string;
+  pendingIncoming: TradeProposalDto[];
+  pendingOutgoing: TradeProposalDto[];
+  history: TradeProposalDto[];
 }

@@ -61,3 +61,16 @@ export enum LedgerEntryType {
   PURSE_ADJUSTMENT = 'PURSE_ADJUSTMENT',
   REFUND_REVERSAL = 'REFUND_REVERSAL'
 }
+
+export enum TradeStatus {
+  PENDING = 'PENDING',
+  ACCEPTED = 'ACCEPTED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+  EXPIRED = 'EXPIRED'
+}
+
+export enum TradeDirection {
+  OUTGOING = 'OUTGOING',
+  INCOMING = 'INCOMING'
+}

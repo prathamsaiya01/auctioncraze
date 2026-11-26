@@ -91,3 +91,16 @@ export const IPL_FRANCHISE_PRESETS: readonly FranchisePreset[] = [
 ] as const;
 
 export const FRANCHISE_CODES = IPL_FRANCHISE_PRESETS.map((f) => f.code);
+
+export function formatFranchiseDisplayName(
+  officialName: string,
+  presetCode: string,
+  customSuffix: string | null | undefined,
+  allowCustomTeamName: boolean
+): string {
+  const cleanSuffix = customSuffix?.trim();
+  if (allowCustomTeamName && cleanSuffix) {
+    return `${presetCode} — ${cleanSuffix}`;
+  }
+  return officialName;
+}

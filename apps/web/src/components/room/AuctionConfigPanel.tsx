@@ -78,6 +78,9 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
   const [allowTeamPurseAdjustments, setAllowTeamPurseAdjustments] = useState(
     room.settings.allowTeamPurseAdjustments
   );
+  const [allowPlayerTrades, setAllowPlayerTrades] = useState(room.settings.allowPlayerTrades);
+  const [allowCustomTeamName, setAllowCustomTeamName] = useState(room.settings.allowCustomTeamName);
+  const [allowLateJoin, setAllowLateJoin] = useState(room.settings.allowLateJoin);
   const [purseAdjustments, setPurseAdjustments] = useState<Record<string, number>>({});
 
   const [defaultBasePriceLakhs, setDefaultBasePriceLakhs] = useState(
@@ -130,6 +133,9 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
     setBidExtensionSeconds(room.settings.bidExtensionSeconds);
     setExtensionThresholdSeconds(room.settings.extensionThresholdSeconds);
     setAllowHostSkip(room.settings.allowHostSkip);
+    setAllowPlayerTrades(room.settings.allowPlayerTrades);
+    setAllowCustomTeamName(room.settings.allowCustomTeamName);
+    setAllowLateJoin(room.settings.allowLateJoin);
     setBidTiers(room.settings.bidIncrementTiers);
     setRetentionEnabled(room.settings.retentionEnabled);
     setMaxRetentionsPerFranchise(room.settings.maxRetentionsPerFranchise);
@@ -254,6 +260,9 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
         extensionThresholdSeconds: Number(extensionThresholdSeconds),
         allowHostSkip,
         allowTeamPurseAdjustments,
+        allowPlayerTrades,
+        allowCustomTeamName,
+        allowLateJoin,
         retentionEnabled,
         maxRetentionsPerFranchise: Number(maxRetentionsPerFranchise),
         maxOverseasRetentions: Number(maxOverseasRetentions),
@@ -552,10 +561,67 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
               <Input
                 label="Min Owners"
                 type="number"
+                min={2}
+                max={10}
                 disabled={!canEdit}
                 value={minOwnersRequired}
                 onChange={(e) => setMinOwnersRequired(Number(e.target.value))}
+                hint="Start with 2+"
               />
+            </div>
+
+            {/* Phase 6D Feature Flags: Trading, Custom Team Names, Late Joining */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <label className="rounded-xl bg-stadium-card/50 border border-stadium-border p-3.5 flex items-start justify-between gap-2 cursor-pointer">
+                <div>
+                  <div className="text-xs font-bold text-white">Allow Player Trades</div>
+                  <div className="text-[11px] text-stadium-muted mt-0.5">
+                    Enable player-for-player swaps once auction starts.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  disabled={!canEdit}
+                  checked={allowPlayerTrades}
+                  onChange={(e) => setAllowPlayerTrades(e.target.checked)}
+                  data-testid="config-allow-trades-toggle"
+                  className="mt-0.5 w-4 h-4 rounded border-stadium-border"
+                />
+              </label>
+
+              <label className="rounded-xl bg-stadium-card/50 border border-stadium-border p-3.5 flex items-start justify-between gap-2 cursor-pointer">
+                <div>
+                  <div className="text-xs font-bold text-white">Allow Custom Nicknames</div>
+                  <div className="text-[11px] text-stadium-muted mt-0.5">
+                    Allow owners to append a 24-char custom suffix.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  disabled={!canEdit}
+                  checked={allowCustomTeamName}
+                  onChange={(e) => setAllowCustomTeamName(e.target.checked)}
+                  data-testid="config-allow-custom-names-toggle"
+                  className="mt-0.5 w-4 h-4 rounded border-stadium-border"
+                />
+              </label>
+
+              <label className="rounded-xl bg-stadium-card/50 border border-stadium-border p-3.5 flex items-start justify-between gap-2 cursor-pointer">
+                <div>
+                  <div className="text-xs font-bold text-white">Allow Late Joining</div>
+                  <div className="text-[11px] text-stadium-muted mt-0.5">
+                    Permit owners to claim open teams mid-auction.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  disabled={!canEdit}
+                  checked={allowLateJoin}
+                  onChange={(e) => setAllowLateJoin(e.target.checked)}
+                  data-testid="config-allow-late-join-toggle"
+                  className="mt-0.5 w-4 h-4 rounded border-stadium-border"
+                />
+              </label>
             </div>
 
             {/* Optional Per-Franchise Purse Adjustments */}

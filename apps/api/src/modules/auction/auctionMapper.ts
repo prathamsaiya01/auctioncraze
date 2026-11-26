@@ -11,7 +11,8 @@ import {
   LotStatus,
   RoomRole,
   RoomStatus,
-  SquadMemberDto
+  SquadMemberDto,
+  formatFranchiseDisplayName
 } from '@auctioncraze/shared';
 import { resolveBidTiers } from '../rooms/roomMapper';
 
@@ -64,6 +65,7 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
 
   const bidTiers = resolveBidTiers(room.bidIncrementTiersJson);
   const lots = room.lots || [];
+  const allowCustom = !!room.allowCustomTeamName;
 
   const currentLotRaw =
     (room.currentLotId ? lots.find((l: any) => l.id === room.currentLotId) : null) ||
@@ -98,6 +100,14 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
       winningFranchiseId: winningFranchise?.id || null,
       winningFranchiseCode: winningFranchise?.presetCode || null,
       winningFranchiseName: winningFranchise?.name || null,
+      winningFranchiseDisplayName: winningFranchise
+        ? formatFranchiseDisplayName(
+            winningFranchise.name,
+            winningFranchise.presetCode,
+            winningFranchise.customSuffix,
+            allowCustom
+          )
+        : null,
       winningFranchiseColor: winningFranchise?.primaryColor || null,
       winningOwnerName: winningOwner?.displayName || null,
       player: {
@@ -129,6 +139,9 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
           roundNumber: b.roundNumber ?? currentLotRaw.roundNumber ?? 1,
           franchiseId: b.franchiseId,
           franchiseCode: fran?.presetCode || '',
+          franchiseDisplayName: fran
+            ? formatFranchiseDisplayName(fran.name, fran.presetCode, fran.customSuffix, allowCustom)
+            : '',
           franchiseColor: fran?.primaryColor || '#38BDF8',
           participantId: b.participantId,
           bidderDisplayName: bidder?.displayName || 'Owner',
@@ -197,6 +210,8 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
       id: f.id,
       presetCode: f.presetCode,
       name: f.name,
+      customSuffix: f.customSuffix ?? null,
+      displayName: formatFranchiseDisplayName(f.name, f.presetCode, f.customSuffix, allowCustom),
       abbreviation: f.abbreviation,
       primaryColor: f.primaryColor,
       secondaryColor: f.secondaryColor,
@@ -252,6 +267,9 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
         status: l.status as LotStatus,
         soldPriceLakhs: l.status === DbLotStatus.SOLD ? l.currentBidLakhs : null,
         franchiseCode: winFran?.presetCode || null,
+        franchiseDisplayName: winFran
+          ? formatFranchiseDisplayName(winFran.name, winFran.presetCode, winFran.customSuffix, allowCustom)
+          : null,
         franchiseColor: winFran?.primaryColor || null,
         settledAt: l.settledAt ? l.settledAt.toISOString() : null
       };
@@ -269,6 +287,9 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
           roundNumber: b.roundNumber ?? l.roundNumber ?? 1,
           franchiseId: b.franchiseId,
           franchiseCode: fran?.presetCode || '',
+          franchiseDisplayName: fran
+            ? formatFranchiseDisplayName(fran.name, fran.presetCode, fran.customSuffix, allowCustom)
+            : '',
           franchiseColor: fran?.primaryColor || '#38BDF8',
           participantId: b.participantId,
           bidderDisplayName: bidder?.displayName || 'Owner',
@@ -314,6 +335,9 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
       extensionThresholdSeconds: room.extensionThresholdSeconds,
       allowHostSkip: room.allowHostSkip,
       allowTeamPurseAdjustments: room.allowTeamPurseAdjustments,
+      allowPlayerTrades: !!room.allowPlayerTrades,
+      allowCustomTeamName: !!room.allowCustomTeamName,
+      allowLateJoin: room.allowLateJoin ?? true,
       retentionEnabled: room.retentionEnabled,
       maxRetentionsPerFranchise: room.maxRetentionsPerFranchise,
       maxOverseasRetentions: room.maxOverseasRetentions

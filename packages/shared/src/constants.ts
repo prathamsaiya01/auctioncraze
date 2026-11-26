@@ -41,6 +41,17 @@ export const SOCKET_EVENTS = {
   LOT_ROUND_REENTERED: 'LOT_ROUND_REENTERED',
   AUCTION_COMPLETED: 'AUCTION_COMPLETED',
 
+  // Phase 6D: Sync, Custom Identity & Player Trading
+  SYNC_REQUEST: 'room:sync',
+  SYNC_ACK: 'SYNC_ACK',
+  FRANCHISE_IDENTITY_UPDATED: 'FRANCHISE_IDENTITY_UPDATED',
+  ROOM_LIVE_SETTINGS_UPDATED: 'ROOM_LIVE_SETTINGS_UPDATED',
+  TRADE_PROPOSED: 'TRADE_PROPOSED',
+  TRADE_ACCEPTED: 'TRADE_ACCEPTED',
+  TRADE_REJECTED: 'TRADE_REJECTED',
+  TRADE_CANCELLED: 'TRADE_CANCELLED',
+  TRADE_EXPIRED: 'TRADE_EXPIRED',
+
   // Social
   CHAT_SEND: 'chat:send',
   CHAT_MESSAGE: 'chat:message',
@@ -83,7 +94,11 @@ export const ROOM_DEFAULTS = {
   BID_EXTENSION_SECONDS: 10,
   EXTENSION_THRESHOLD_SECONDS: 5,
   MAX_RETENTIONS_PER_FRANCHISE: 4,
-  MAX_OVERSEAS_RETENTIONS: 2
+  MAX_OVERSEAS_RETENTIONS: 2,
+  CUSTOM_TEAM_NAME_MAX_LENGTH: 24,
+  ALLOW_PLAYER_TRADES: false,
+  ALLOW_CUSTOM_TEAM_NAME: false,
+  ALLOW_LATE_JOIN: true
 } as const;
 
 export const AUCTION_MODE_PRESETS: Record<
@@ -153,7 +168,7 @@ export const AUCTION_MODE_PRESETS: Record<
     minSquadSize: 12,
     maxSquadSize: 25,
     maxOverseas: 8,
-    minOwnersRequired: 1,
+    minOwnersRequired: 2,
     defaultBasePriceLakhs: 30,
     countdownSeconds: 20,
     allowLateBidExtension: true,

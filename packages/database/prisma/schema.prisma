@@ -119,6 +119,9 @@ model Room {
   extensionThresholdSeconds Int            @default(5)
   allowHostSkip             Boolean        @default(true)
   allowTeamPurseAdjustments Boolean        @default(false)
+  allowPlayerTrades         Boolean        @default(false)
+  allowCustomTeamName       Boolean        @default(false)
+  allowLateJoin             Boolean        @default(true)
   retentionEnabled          Boolean        @default(false)
   maxRetentionsPerFranchise Int            @default(4)
   maxOverseasRetentions     Int            @default(2)
@@ -140,6 +143,7 @@ model Room {
   events                AuctionEvent[]
   chatMessages          ChatMessage[]
   postAuctionSnapshots  PostAuctionRatingSnapshot[]
+  tradeProposals        TradeProposal[]
 
   @@index([visibility, status])
   @@index([code])
@@ -150,6 +154,7 @@ model RoomFranchise {
   roomId               String
   presetCode           String
   name                 String
+  customSuffix         String?
   abbreviation         String
   primaryColor         String
   secondaryColor       String
@@ -165,9 +170,11 @@ model RoomFranchise {
   room        Room             @relation(fields: [roomId], references: [id], onDelete: Cascade)
   owner       RoomParticipant?
   retentions  RoomRetention[]
-  bids        Bid[]
-  purchases   Purchase[]
-  purseLedger PurseLedger[]
+  bids                   Bid[]
+  purchases              Purchase[]
+  purseLedger            PurseLedger[]
+  outgoingTradeProposals TradeProposal[] @relation("TradeProposerFranchise")
+  incomingTradeProposals TradeProposal[] @relation("TradeReceiverFranchise")
 
   @@unique([roomId, presetCode])
   @@index([roomId])
@@ -246,6 +253,7 @@ model MasterPlayer {
   lots        RoomPlayerLot[]
   retentions  RoomRetention[]
   purchases   Purchase[]
+  tradeItems  TradeProposalItem[]
 
   @@index([fullName])
   @@index([cricinfoId])
@@ -455,4 +463,67 @@ model PostAuctionRatingSnapshot {
 
   @@unique([roomId, snapshotVersion])
   @@index([roomId, calculatedAt])
+}
+
+// -------------------------------------------------------------
+// PHASE 6D: PLAYER-FOR-PLAYER FRANCHISE TRADING SYSTEM
+// -------------------------------------------------------------
+
+enum TradeStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum TradeDirection {
+  OUTGOING
+  INCOMING
+}
+
+model TradeProposal {
+  id                    String      @id @default(uuid())
+  roomId                String
+  proposerFranchiseId   String
+  receiverFranchiseId   String
+  proposerParticipantId String
+  receiverParticipantId String
+  status                TradeStatus @default(PENDING)
+  idempotencyKey        String      @unique
+  acceptIdempotencyKey  String?     @unique
+  note                  String?
+  failureReason         String?
+  expiresAt             DateTime
+  respondedAt           DateTime?
+  executedAt            DateTime?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  room              Room                @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  proposerFranchise RoomFranchise       @relation("TradeProposerFranchise", fields: [proposerFranchiseId], references: [id], onDelete: Cascade)
+  receiverFranchise RoomFranchise       @relation("TradeReceiverFranchise", fields: [receiverFranchiseId], references: [id], onDelete: Cascade)
+  items             TradeProposalItem[]
+
+  @@index([roomId, status])
+  @@index([proposerFranchiseId, status])
+  @@index([receiverFranchiseId, status])
+  @@index([expiresAt, status])
+}
+
+model TradeProposalItem {
+  id              String         @id @default(uuid())
+  tradeId         String
+  playerId        String
+  sourceType      String         // AUCTION | RETENTION
+  direction       TradeDirection // OUTGOING (proposer->receiver) | INCOMING (receiver->proposer)
+  fromFranchiseId String
+  toFranchiseId   String
+  priceLakhs      Int
+
+  trade  TradeProposal @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  player MasterPlayer  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([tradeId, playerId])
+  @@index([playerId])
 }

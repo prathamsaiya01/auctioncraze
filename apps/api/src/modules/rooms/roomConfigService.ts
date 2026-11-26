@@ -39,6 +39,9 @@ export interface UpdateAuctionConfigInput {
   extensionThresholdSeconds: number;
   allowHostSkip: boolean;
   allowTeamPurseAdjustments: boolean;
+  allowPlayerTrades?: boolean;
+  allowCustomTeamName?: boolean;
+  allowLateJoin?: boolean;
   retentionEnabled: boolean;
   maxRetentionsPerFranchise: number;
   maxOverseasRetentions: number;
@@ -241,6 +244,9 @@ export class RoomConfigService {
           extensionThresholdSeconds: input.extensionThresholdSeconds,
           allowHostSkip: input.allowHostSkip,
           allowTeamPurseAdjustments: input.allowTeamPurseAdjustments,
+          allowPlayerTrades: input.allowPlayerTrades ?? room.allowPlayerTrades,
+          allowCustomTeamName: input.allowCustomTeamName ?? room.allowCustomTeamName,
+          allowLateJoin: input.allowLateJoin ?? room.allowLateJoin,
           retentionEnabled: input.retentionEnabled,
           maxRetentionsPerFranchise: input.maxRetentionsPerFranchise,
           maxOverseasRetentions: input.maxOverseasRetentions,

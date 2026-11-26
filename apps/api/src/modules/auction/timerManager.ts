@@ -17,6 +17,7 @@ function closeLockKey(lotId: string): string {
 export class AuctionTimerManager {
   private static intervalId: NodeJS.Timeout | null = null;
   private static isTicking = false;
+  private static lastSyncPulseByRoom = new Map<string, number>();
 
   static async setRunningTimer(roomCode: string, lotId: string, deadlineMs: number): Promise<void> {
     const code = roomCode.toUpperCase();
@@ -91,6 +92,7 @@ export class AuctionTimerManager {
 
     if (recovered > 0) {
       console.log(`⏱️  Recovered ${recovered} active auction timer(s) from PostgreSQL.`);
+      await AuctionTimerManager.processExpiredTimers(Date.now());
     }
     return recovered;
   }
@@ -210,6 +212,36 @@ export class AuctionTimerManager {
           console.error(`[TimerManager] Error processing expired timer for ${roomCode}:`, err);
         }
       }
+    }
+
+    // Broadcast lightweight drift-correction TIMER_UPDATED pulse every 5s for active rooms
+    try {
+      const runningRooms = await redis.zrangebyscore(
+        ACTIVE_TIMERS_ZSET,
+        `(${nowMs}`,
+        '+inf',
+        'WITHSCORES'
+      );
+      for (let i = 0; i < runningRooms.length; i += 2) {
+        const roomCode = runningRooms[i];
+        const deadlineMs = Number(runningRooms[i + 1]);
+        const lastPulse = AuctionTimerManager.lastSyncPulseByRoom.get(roomCode) ?? 0;
+        if (nowMs - lastPulse >= 5000) {
+          AuctionTimerManager.lastSyncPulseByRoom.set(roomCode, nowMs);
+          const raw = await redis.get(timerKey(roomCode));
+          const parsed = raw ? JSON.parse(raw) : null;
+          emitToRoom(roomCode, SOCKET_EVENTS.TIMER_UPDATED, {
+            roomCode,
+            lotId: parsed?.lotId ?? null,
+            deadlineMs,
+            remainingSeconds: Math.max(0, Math.ceil((deadlineMs - nowMs) / 1000)),
+            isPaused: false,
+            serverTimeMs: nowMs
+          });
+        }
+      }
+    } catch {
+      // Non-fatal sync pulse check
     }
 
     return closedCodes;

@@ -11,6 +11,8 @@ import {
   setReadySchema,
   transferHostSchema,
   updateAuctionConfigSchema,
+  updateFranchiseNicknameSchema,
+  updateLiveSettingsSchema,
   updateRoomSettingsSchema
 } from '@auctioncraze/shared';
 import { AuthenticatedRequest } from '../../middleware/auth';
@@ -222,6 +224,40 @@ export class RoomController {
     try {
       const { code } = roomCodeParamSchema.parse(req.params);
       const room = await RoomConfigService.finalizeConfiguration(code, req.guestSession!.id);
+      res.json({ success: true, data: room });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async updateLiveSettings(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { code } = roomCodeParamSchema.parse(req.params);
+      const payload = updateLiveSettingsSchema.parse(req.body);
+      const room = await RoomService.updateLiveSettings(code, req.guestSession!.id, payload);
+      res.json({ success: true, data: room });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async updateFranchiseNickname(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { code } = roomCodeParamSchema.parse(req.params);
+      const { customSuffix } = updateFranchiseNicknameSchema.parse(req.body);
+      const room = await RoomService.updateFranchiseNickname(
+        code,
+        req.guestSession!.id,
+        customSuffix
+      );
       res.json({ success: true, data: room });
     } catch (err) {
       next(err);

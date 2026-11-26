@@ -65,7 +65,10 @@ export const roomSettingsSchema = z
       .min(1)
       .max(30)
       .default(ROOM_DEFAULTS.EXTENSION_THRESHOLD_SECONDS),
-    allowHostSkip: z.boolean().default(true)
+    allowHostSkip: z.boolean().default(true),
+    allowPlayerTrades: z.boolean().default(ROOM_DEFAULTS.ALLOW_PLAYER_TRADES),
+    allowCustomTeamName: z.boolean().default(ROOM_DEFAULTS.ALLOW_CUSTOM_TEAM_NAME),
+    allowLateJoin: z.boolean().default(ROOM_DEFAULTS.ALLOW_LATE_JOIN)
   })
   .refine((data) => data.maxSquadSize >= data.minSquadSize, {
     message: 'Maximum squad size must be greater than or equal to minimum squad size',
@@ -85,7 +88,7 @@ export const updateAuctionConfigSchema = z
     maxSquadSize: z.number().int().min(1).max(30),
     maxOverseas: z.number().int().min(0).max(15),
     maxSpectators: z.number().int().min(0).max(100),
-    minOwnersRequired: z.number().int().min(1).max(10),
+    minOwnersRequired: z.number().int().min(2).max(10),
     defaultBasePriceLakhs: z.number().int().min(5).max(2000),
     bidIncrementTiers: bidTiersSchema,
     countdownSeconds: z.number().int().min(5).max(120),
@@ -94,6 +97,9 @@ export const updateAuctionConfigSchema = z
     extensionThresholdSeconds: z.number().int().min(1).max(30),
     allowHostSkip: z.boolean(),
     allowTeamPurseAdjustments: z.boolean(),
+    allowPlayerTrades: z.boolean().optional(),
+    allowCustomTeamName: z.boolean().optional(),
+    allowLateJoin: z.boolean().optional(),
     retentionEnabled: z.boolean(),
     maxRetentionsPerFranchise: z.number().int().min(0).max(10),
     maxOverseasRetentions: z.number().int().min(0).max(10),
@@ -252,4 +258,95 @@ export const csvImportSchema = z.object({
   sourceName: z.string().trim().min(2).max(120).default('csv_upload'),
   fileName: z.string().trim().max(180).optional(),
   provenanceNotes: z.string().trim().max(500).optional()
+});
+
+// -------------------------------------------------------------
+// PHASE 6D: TRADING, CUSTOM TEAM IDENTITY & LIVE ROOM CONTROLS
+// -------------------------------------------------------------
+
+const BLOCKED_NICKNAME_TERMS = [
+  'fuck',
+  'shit',
+  'bitch',
+  'asshole',
+  'bastard',
+  'dick',
+  'cunt',
+  'slut',
+  'whore',
+  'nigger',
+  'faggot'
+] as const;
+
+export function containsOffensiveNickname(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return BLOCKED_NICKNAME_TERMS.some((term) => normalized.includes(term));
+}
+
+export const customSuffixSchema = z
+  .string()
+  .trim()
+  .transform((val) => val.replace(/\s+/g, ' '))
+  .refine((val) => val.length >= 2, 'Team nickname must be at least 2 characters')
+  .refine(
+    (val) => val.length <= ROOM_DEFAULTS.CUSTOM_TEAM_NAME_MAX_LENGTH,
+    `Team nickname cannot exceed ${ROOM_DEFAULTS.CUSTOM_TEAM_NAME_MAX_LENGTH} characters`
+  )
+  .refine(
+    (val) => /^[a-zA-Z0-9 .'-]+$/.test(val),
+    'Team nickname may only contain letters, numbers, spaces, periods, hyphens, and apostrophes'
+  )
+  .refine(
+    (val) => !containsOffensiveNickname(val),
+    'Team nickname contains disallowed language'
+  );
+
+export const updateFranchiseNicknameSchema = z.object({
+  customSuffix: z.union([customSuffixSchema, z.null()])
+});
+
+export const updateLiveSettingsSchema = z
+  .object({
+    allowPlayerTrades: z.boolean().optional(),
+    allowCustomTeamName: z.boolean().optional(),
+    allowLateJoin: z.boolean().optional()
+  })
+  .refine(
+    (d) =>
+      d.allowPlayerTrades !== undefined ||
+      d.allowCustomTeamName !== undefined ||
+      d.allowLateJoin !== undefined,
+    { message: 'At least one room feature setting must be provided' }
+  );
+
+export const createTradeProposalSchema = z
+  .object({
+    receiverFranchiseId: z.string().uuid('Invalid receiver franchise ID'),
+    outgoingPlayerIds: z
+      .array(z.string().uuid('Invalid outgoing player ID'))
+      .min(1, 'Select at least 1 player from your squad to offer')
+      .max(10, 'Maximum 10 outgoing players per trade'),
+    incomingPlayerIds: z
+      .array(z.string().uuid('Invalid incoming player ID'))
+      .min(1, 'Select at least 1 player to request in return')
+      .max(10, 'Maximum 10 incoming players per trade'),
+    note: z.string().trim().max(180, 'Trade note cannot exceed 180 characters').optional(),
+    expiresInMinutes: z.number().int().min(1).max(1440).default(15),
+    idempotencyKey: z.string().trim().min(6).max(128)
+  })
+  .refine(
+    (d) => new Set(d.outgoingPlayerIds).size === d.outgoingPlayerIds.length,
+    { message: 'Duplicate outgoing players are not allowed', path: ['outgoingPlayerIds'] }
+  )
+  .refine(
+    (d) => new Set(d.incomingPlayerIds).size === d.incomingPlayerIds.length,
+    { message: 'Duplicate incoming players are not allowed', path: ['incomingPlayerIds'] }
+  )
+  .refine(
+    (d) => !d.outgoingPlayerIds.some((id) => d.incomingPlayerIds.includes(id)),
+    { message: 'A player cannot appear on both sides of the same trade', path: ['incomingPlayerIds'] }
+  );
+
+export const respondTradeSchema = z.object({
+  idempotencyKey: z.string().trim().min(6).max(128).optional()
 });

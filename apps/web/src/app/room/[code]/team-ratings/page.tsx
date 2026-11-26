@@ -352,7 +352,9 @@ export default function PostAuctionTeamRatingsPage() {
                           />
                           <div className="min-w-0">
                             <p className="font-display font-bold text-lg text-white truncate">
-                              {t.franchiseCode}
+                              {t.franchiseDisplayName && t.franchiseDisplayName !== t.franchiseName
+                                ? t.franchiseDisplayName
+                                : t.franchiseCode}
                             </p>
                             <p className="text-[11px] text-stadium-muted truncate">
                               {t.ownerDisplayName || 'Unclaimed'}
@@ -515,7 +517,7 @@ export default function PostAuctionTeamRatingsPage() {
                       >
                         <td className="px-3 py-2.5 font-bold text-gold-300">{t.rank ? `#${t.rank}` : '—'}</td>
                         <td className="px-3 py-2.5 font-sans font-semibold text-white">
-                          {t.franchiseCode} · {t.franchiseName}
+                          {t.franchiseCode} · {t.franchiseDisplayName || t.franchiseName}
                         </td>
                         <td className="px-3 py-2.5 text-white">{t.squadSize}</td>
                         <td className="px-3 py-2.5 font-bold text-gold-300">{fmt(t.overallRating)}</td>

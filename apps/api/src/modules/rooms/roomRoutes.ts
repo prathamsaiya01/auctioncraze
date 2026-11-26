@@ -3,6 +3,7 @@ import { authenticateGuest, optionalAuthenticateGuest } from '../../middleware/a
 import { rateLimit } from '../../middleware/rateLimit';
 import { RoomController } from './roomController';
 import auctionRoutes from '../auction/auctionRoutes';
+import tradeRoutes from '../trades/tradeRoutes';
 
 const router = Router();
 
@@ -29,6 +30,8 @@ router.post('/:code/leave', authenticateGuest, RoomController.leave);
 router.post('/:code/kick', authenticateGuest, RoomController.kick);
 router.post('/:code/transfer-host', authenticateGuest, RoomController.transferHost);
 router.patch('/:code/settings', authenticateGuest, RoomController.updateSettings);
+router.patch('/:code/live-settings', authenticateGuest, RoomController.updateLiveSettings);
+router.patch('/:code/franchise/nickname', authenticateGuest, RoomController.updateFranchiseNickname);
 
 // Phase 3: Auction Configuration, Player Pool, Retentions & Finalization
 router.patch('/:code/config', authenticateGuest, RoomController.updateConfig);
@@ -40,5 +43,8 @@ router.post('/:code/config/finalize', authenticateGuest, RoomController.finalize
 
 // Phase 4: Real-Time Auction Engine
 router.use('/:code/auction', auctionRoutes);
+
+// Phase 6D: Franchise Player Trading System
+router.use('/:code/trades', tradeRoutes);
 
 export default router;

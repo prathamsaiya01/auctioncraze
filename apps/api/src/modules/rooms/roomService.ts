@@ -12,13 +12,16 @@ import {
   AuctionMode,
   IPL_FRANCHISE_PRESETS,
   PublicRoomSummaryDto,
+  ROOM_DEFAULTS,
   RoomDetailDto,
   RoomRole,
   RoomVisibility,
-  SOCKET_EVENTS
+  SOCKET_EVENTS,
+  formatFranchiseDisplayName
 } from '@auctioncraze/shared';
 import { AppError } from '../../middleware/errorHandler';
 import { emitToRoom, kickParticipantSockets } from '../../sockets/socketServer';
+import { AUCTION_ROOM_INCLUDE, mapAuctionStateSnapshot } from '../auction/auctionMapper';
 import { generateRoomCode } from './roomCode';
 import { mapRoomToDetailDto } from './roomMapper';
 import {
@@ -46,6 +49,9 @@ interface CreateRoomInput {
     bidExtensionSeconds: number;
     extensionThresholdSeconds: number;
     allowHostSkip: boolean;
+    allowPlayerTrades?: boolean;
+    allowCustomTeamName?: boolean;
+    allowLateJoin?: boolean;
   };
 }
 
@@ -119,6 +125,9 @@ export class RoomService {
           extensionThresholdSeconds: input.settings.extensionThresholdSeconds,
           allowHostSkip: input.settings.allowHostSkip,
           allowTeamPurseAdjustments: modePreset.allowTeamPurseAdjustments,
+          allowPlayerTrades: input.settings.allowPlayerTrades ?? ROOM_DEFAULTS.ALLOW_PLAYER_TRADES,
+          allowCustomTeamName: input.settings.allowCustomTeamName ?? ROOM_DEFAULTS.ALLOW_CUSTOM_TEAM_NAME,
+          allowLateJoin: input.settings.allowLateJoin ?? ROOM_DEFAULTS.ALLOW_LATE_JOIN,
           retentionEnabled: modePreset.retentionEnabled,
           maxRetentionsPerFranchise: modePreset.maxRetentionsPerFranchise,
           maxOverseasRetentions: modePreset.maxOverseasRetentions
@@ -316,11 +325,20 @@ export class RoomService {
 
       if (input.joinAs === RoomRole.OWNER) {
         if (room.status !== DbRoomStatus.LOBBY) {
-          throw new AppError(
-            'Auction has already started. You can only join this room as a spectator.',
-            409,
-            'AUCTION_ALREADY_STARTED'
-          );
+          if (room.status !== DbRoomStatus.LIVE && room.status !== DbRoomStatus.PAUSED) {
+            throw new AppError(
+              'This auction is no longer accepting new franchise owners.',
+              409,
+              'ROOM_CLOSED'
+            );
+          }
+          if (!room.allowLateJoin) {
+            throw new AppError(
+              'Late franchise joining is disabled by the room host. You may join as a spectator.',
+              409,
+              'LATE_JOIN_DISABLED'
+            );
+          }
         }
 
         const claimedIds = new Set(
@@ -373,7 +391,7 @@ export class RoomService {
               displayName,
               role: input.joinAs as DbRoomRole,
               franchiseId: targetFranchiseId,
-              isReady: false,
+              isReady: room.status !== DbRoomStatus.LOBBY && input.joinAs === RoomRole.OWNER,
               isConnected: true,
               leftAt: null,
               joinedAt: new Date(),
@@ -387,7 +405,7 @@ export class RoomService {
               displayName,
               role: input.joinAs as DbRoomRole,
               franchiseId: targetFranchiseId,
-              isReady: false,
+              isReady: room.status !== DbRoomStatus.LOBBY && input.joinAs === RoomRole.OWNER,
               isConnected: true
             }
           });
@@ -450,6 +468,16 @@ export class RoomService {
       readiness: publicSnapshot.readiness
     });
     emitToRoom(normalized, SOCKET_EVENTS.ROOM_STATE, publicSnapshot);
+
+    if (result.fullRoom.status !== DbRoomStatus.LOBBY) {
+      const auctionRoom = await prisma.room.findUnique({
+        where: { id: result.fullRoom.id },
+        include: AUCTION_ROOM_INCLUDE
+      });
+      if (auctionRoom) {
+        emitToRoom(normalized, SOCKET_EVENTS.AUCTION_STATE, mapAuctionStateSnapshot(auctionRoom));
+      }
+    }
 
     return mapRoomToDetailDto(result.fullRoom, true);
   }
@@ -1027,6 +1055,9 @@ export class RoomService {
           bidExtensionSeconds: payload.settings.bidExtensionSeconds,
           extensionThresholdSeconds: payload.settings.extensionThresholdSeconds,
           allowHostSkip: payload.settings.allowHostSkip,
+          allowPlayerTrades: payload.settings.allowPlayerTrades ?? room.allowPlayerTrades,
+          allowCustomTeamName: payload.settings.allowCustomTeamName ?? room.allowCustomTeamName,
+          allowLateJoin: payload.settings.allowLateJoin ?? room.allowLateJoin,
           version: nextVersion
         }
       });
@@ -1056,5 +1087,191 @@ export class RoomService {
     emitToRoom(normalized, SOCKET_EVENTS.ROOM_STATE, mapRoomToDetailDto(updatedRoom, false));
 
     return mapRoomToDetailDto(updatedRoom, true);
+  }
+
+  /**
+   * Host-only toggle for live lifecycle features:
+   * - ALLOW_PLAYER_TRADES
+   * - ALLOW_CUSTOM_TEAM_NAME
+   * - ALLOW_LATE_JOIN
+   */
+  static async updateLiveSettings(
+    code: string,
+    hostGuestSessionId: string,
+    payload: {
+      allowPlayerTrades?: boolean;
+      allowCustomTeamName?: boolean;
+      allowLateJoin?: boolean;
+    }
+  ): Promise<RoomDetailDto> {
+    const normalized = code.trim().toUpperCase();
+
+    const updatedRoom = await prisma.$transaction(async (tx) => {
+      const { id: roomId } = await lockRoomByCode(tx, normalized);
+      const room = await fetchRoomWithRelations(tx, roomId);
+
+      const caller = room.participants.find(
+        (p) => p.guestSessionId === hostGuestSessionId && !p.isRemoved && !p.leftAt
+      );
+      if (!caller || caller.id !== room.hostParticipantId || caller.role !== DbRoomRole.HOST) {
+        throw new AppError('Only the room host can update live room feature settings.', 403, 'HOST_ONLY');
+      }
+      if (room.status === DbRoomStatus.CANCELLED) {
+        throw new AppError('Cancelled rooms cannot be modified.', 409, 'ROOM_CANCELLED');
+      }
+
+      const nextVersion = room.version + 1;
+      await tx.room.update({
+        where: { id: room.id },
+        data: {
+          ...(payload.allowPlayerTrades !== undefined
+            ? { allowPlayerTrades: payload.allowPlayerTrades }
+            : {}),
+          ...(payload.allowCustomTeamName !== undefined
+            ? { allowCustomTeamName: payload.allowCustomTeamName }
+            : {}),
+          ...(payload.allowLateJoin !== undefined ? { allowLateJoin: payload.allowLateJoin } : {}),
+          version: nextVersion
+        }
+      });
+
+      await appendRoomEvent(tx, room.id, nextVersion, SOCKET_EVENTS.ROOM_LIVE_SETTINGS_UPDATED, payload);
+      return fetchRoomWithRelations(tx, room.id);
+    });
+
+    const publicDto = mapRoomToDetailDto(updatedRoom, false);
+    emitToRoom(normalized, SOCKET_EVENTS.ROOM_LIVE_SETTINGS_UPDATED, {
+      roomCode: normalized,
+      settings: publicDto.settings
+    });
+    emitToRoom(normalized, SOCKET_EVENTS.ROOM_SETTINGS_UPDATED, {
+      roomCode: normalized,
+      settings: publicDto.settings
+    });
+    emitToRoom(normalized, SOCKET_EVENTS.ROOM_STATE, publicDto);
+
+    if (updatedRoom.status !== DbRoomStatus.LOBBY) {
+      const auctionRoom = await prisma.room.findUnique({
+        where: { id: updatedRoom.id },
+        include: AUCTION_ROOM_INCLUDE
+      });
+      if (auctionRoom) {
+        emitToRoom(normalized, SOCKET_EVENTS.AUCTION_STATE, mapAuctionStateSnapshot(auctionRoom));
+      }
+    }
+
+    return mapRoomToDetailDto(updatedRoom, true);
+  }
+
+  /**
+   * Custom Franchise Identity: owner sets an optional nickname suffix while ALLOW_CUSTOM_TEAM_NAME is enabled.
+   * Official franchise id, presetCode, name, and ownership permissions are never altered.
+   */
+  static async updateFranchiseNickname(
+    code: string,
+    guestSessionId: string,
+    customSuffix: string | null
+  ): Promise<RoomDetailDto> {
+    const normalized = code.trim().toUpperCase();
+
+    const result = await prisma.$transaction(async (tx) => {
+      const { id: roomId } = await lockRoomByCode(tx, normalized);
+      const room = await fetchRoomWithRelations(tx, roomId);
+
+      if (room.status === DbRoomStatus.CANCELLED) {
+        throw new AppError('Cancelled rooms cannot be modified.', 409, 'ROOM_CANCELLED');
+      }
+
+      const participant = room.participants.find(
+        (p) => p.guestSessionId === guestSessionId && !p.isRemoved && !p.leftAt
+      );
+      if (!participant) {
+        throw new AppError('You are not an active member of this room.', 403, 'NOT_A_MEMBER');
+      }
+      if (participant.role === DbRoomRole.SPECTATOR) {
+        throw new AppError('Spectators cannot customize franchise identities.', 403, 'SPECTATOR_FORBIDDEN');
+      }
+      if (!participant.franchiseId) {
+        throw new AppError('You must own a franchise to set a custom team nickname.', 400, 'NO_FRANCHISE_OWNED');
+      }
+      if (!room.allowCustomTeamName) {
+        throw new AppError(
+          'Custom team naming is disabled by the room host.',
+          403,
+          'CUSTOM_TEAM_NAME_DISABLED'
+        );
+      }
+
+      const targetFranchise = room.franchises.find((f) => f.id === participant.franchiseId);
+      if (!targetFranchise) {
+        throw new AppError('Owned franchise record not found.', 404, 'FRANCHISE_NOT_FOUND');
+      }
+
+      const cleanSuffix = customSuffix ? customSuffix.trim().replace(/\s+/g, ' ') : null;
+      if (cleanSuffix) {
+        const lowerTarget = cleanSuffix.toLowerCase();
+        const duplicate = room.franchises.find(
+          (f) => f.id !== targetFranchise.id && f.customSuffix && f.customSuffix.toLowerCase() === lowerTarget
+        );
+        if (duplicate) {
+          throw new AppError(
+            `Nickname '${cleanSuffix}' is already claimed by ${duplicate.presetCode}.`,
+            409,
+            'DUPLICATE_TEAM_NICKNAME'
+          );
+        }
+      }
+
+      await tx.roomFranchise.update({
+        where: { id: targetFranchise.id },
+        data: { customSuffix: cleanSuffix }
+      });
+
+      const nextVersion = room.version + 1;
+      await tx.room.update({ where: { id: room.id }, data: { version: nextVersion } });
+
+      const displayName = formatFranchiseDisplayName(
+        targetFranchise.name,
+        targetFranchise.presetCode,
+        cleanSuffix,
+        room.allowCustomTeamName
+      );
+
+      await appendRoomEvent(tx, room.id, nextVersion, SOCKET_EVENTS.FRANCHISE_IDENTITY_UPDATED, {
+        franchiseId: targetFranchise.id,
+        franchiseCode: targetFranchise.presetCode,
+        officialName: targetFranchise.name,
+        customSuffix: cleanSuffix,
+        displayName
+      });
+
+      const updatedRoom = await fetchRoomWithRelations(tx, room.id);
+      return {
+        updatedRoom,
+        eventPayload: {
+          roomCode: normalized,
+          franchiseId: targetFranchise.id,
+          franchiseCode: targetFranchise.presetCode,
+          customSuffix: cleanSuffix,
+          displayName
+        }
+      };
+    });
+
+    const publicDto = mapRoomToDetailDto(result.updatedRoom, false);
+    emitToRoom(normalized, SOCKET_EVENTS.FRANCHISE_IDENTITY_UPDATED, result.eventPayload);
+    emitToRoom(normalized, SOCKET_EVENTS.ROOM_STATE, publicDto);
+
+    if (result.updatedRoom.status !== DbRoomStatus.LOBBY) {
+      const auctionRoom = await prisma.room.findUnique({
+        where: { id: result.updatedRoom.id },
+        include: AUCTION_ROOM_INCLUDE
+      });
+      if (auctionRoom) {
+        emitToRoom(normalized, SOCKET_EVENTS.AUCTION_STATE, mapAuctionStateSnapshot(auctionRoom));
+      }
+    }
+
+    return mapRoomToDetailDto(result.updatedRoom, true);
   }
 }

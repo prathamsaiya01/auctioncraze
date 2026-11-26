@@ -106,80 +106,177 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
   });
 
   io.on('connection', (socket: AuthenticatedSocket) => {
-    socket.on(SOCKET_EVENTS.ROOM_JOIN, async (payload: { roomCode?: string }) => {
-      try {
-        const roomCode = payload?.roomCode?.trim().toUpperCase();
-        if (!roomCode) {
-          socket.emit(SOCKET_EVENTS.ROOM_ERROR, {
-            code: 'INVALID_ROOM_CODE',
-            message: 'Room code is required.'
+    socket.on(
+      SOCKET_EVENTS.ROOM_JOIN,
+      async (payload: { roomCode?: string }, ack?: (res: Record<string, unknown>) => void) => {
+        try {
+          const roomCode = payload?.roomCode?.trim().toUpperCase();
+          if (!roomCode) {
+            const errPayload = {
+              ok: false,
+              code: 'INVALID_ROOM_CODE',
+              message: 'Room code is required.'
+            };
+            socket.emit(SOCKET_EVENTS.ROOM_ERROR, errPayload);
+            ack?.(errPayload);
+            return;
+          }
+
+          const room = await prisma.room.findUnique({
+            where: { code: roomCode },
+            select: { id: true, code: true, inviteToken: true }
           });
-          return;
-        }
 
-        const room = await prisma.room.findUnique({
-          where: { code: roomCode },
-          select: { id: true, code: true, inviteToken: true }
-        });
+          if (!room) {
+            const errPayload = {
+              ok: false,
+              code: 'ROOM_NOT_FOUND',
+              message: `Room '${roomCode}' not found.`
+            };
+            socket.emit(SOCKET_EVENTS.ROOM_ERROR, errPayload);
+            ack?.(errPayload);
+            return;
+          }
 
-        if (!room) {
-          socket.emit(SOCKET_EVENTS.ROOM_ERROR, {
-            code: 'ROOM_NOT_FOUND',
-            message: `Room '${roomCode}' not found.`
+          // Strictly verify active membership in PostgreSQL (never trust client participantId/role)
+          const participant = await prisma.roomParticipant.findUnique({
+            where: {
+              roomId_guestSessionId: {
+                roomId: room.id,
+                guestSessionId: socket.guestSession!.id
+              }
+            }
           });
-          return;
-        }
 
-        // Strictly verify active membership in PostgreSQL (never trust client participantId/role)
-        const participant = await prisma.roomParticipant.findUnique({
-          where: {
-            roomId_guestSessionId: {
-              roomId: room.id,
-              guestSessionId: socket.guestSession!.id
+          if (!participant || participant.isRemoved || participant.leftAt) {
+            const errPayload = {
+              ok: false,
+              code: 'NOT_A_MEMBER',
+              message: 'You must join this room before subscribing to real-time updates.'
+            };
+            socket.emit(SOCKET_EVENTS.ROOM_ERROR, errPayload);
+            ack?.(errPayload);
+            return;
+          }
+
+          socket.join(SOCKET_ROOMS.room(room.code));
+          socket.join(SOCKET_ROOMS.participant(participant.id));
+          socket.joinedRooms?.set(room.code, participant.id);
+
+          const presenceKey = onlineSocketsKey(room.code, participant.id);
+          await redis.sadd(presenceKey, socket.id);
+          await redis.expire(presenceKey, 86400);
+
+          const wasDisconnected = !participant.isConnected;
+          await prisma.roomParticipant.update({
+            where: { id: participant.id },
+            data: { isConnected: true, lastHeartbeatAt: new Date() }
+          });
+
+          // Fetch full authoritative snapshot for initial join & reconnection recovery
+          const fullRoom = await prisma.room.findUnique({
+            where: { id: room.id },
+            include: ROOM_RELATIONS_INCLUDE
+          });
+
+          const serverTimeIso = new Date().toISOString();
+          const serverTimeMs = Date.now();
+          if (fullRoom) {
+            const personalSnapshot = mapRoomToDetailDto(fullRoom, true);
+            socket.emit(SOCKET_EVENTS.ROOM_JOINED, {
+              roomCode: room.code,
+              participantId: participant.id,
+              version: fullRoom.version,
+              serverTime: serverTimeIso
+            });
+            socket.emit(SOCKET_EVENTS.ROOM_STATE, personalSnapshot);
+
+            if (fullRoom.status !== DbRoomStatus.LOBBY) {
+              const auctionRoom = await prisma.room.findUnique({
+                where: { id: room.id },
+                include: AUCTION_ROOM_INCLUDE
+              });
+              if (auctionRoom) {
+                socket.emit(SOCKET_EVENTS.AUCTION_STATE, mapAuctionStateSnapshot(auctionRoom));
+              }
+            }
+
+            if (wasDisconnected) {
+              const roomWideSnapshot = mapRoomToDetailDto(fullRoom, false);
+              socket.to(SOCKET_ROOMS.room(room.code)).emit(SOCKET_EVENTS.ROOM_STATE, roomWideSnapshot);
             }
           }
-        });
 
-        if (!participant || participant.isRemoved || participant.leftAt) {
-          socket.emit(SOCKET_EVENTS.ROOM_ERROR, {
-            code: 'NOT_A_MEMBER',
-            message: 'You must join this room before subscribing to real-time updates.'
-          });
-          return;
-        }
-
-        socket.join(SOCKET_ROOMS.room(room.code));
-        socket.join(SOCKET_ROOMS.participant(participant.id));
-        socket.joinedRooms?.set(room.code, participant.id);
-
-        const presenceKey = onlineSocketsKey(room.code, participant.id);
-        await redis.sadd(presenceKey, socket.id);
-        await redis.expire(presenceKey, 86400);
-
-        const wasDisconnected = !participant.isConnected;
-        await prisma.roomParticipant.update({
-          where: { id: participant.id },
-          data: { isConnected: true, lastHeartbeatAt: new Date() }
-        });
-
-        // Fetch full authoritative snapshot for initial join & reconnection recovery
-        const fullRoom = await prisma.room.findUnique({
-          where: { id: room.id },
-          include: ROOM_RELATIONS_INCLUDE
-        });
-
-        if (fullRoom) {
-          const personalSnapshot = mapRoomToDetailDto(fullRoom, true);
-          socket.emit(SOCKET_EVENTS.ROOM_JOINED, {
+          ack?.({
+            ok: true,
             roomCode: room.code,
             participantId: participant.id,
-            serverTime: new Date().toISOString()
+            version: fullRoom?.version ?? 1,
+            serverTimeMs
           });
+        } catch (err) {
+          console.error('[Socket] ROOM_JOIN error:', err);
+          const errPayload = {
+            ok: false,
+            code: 'JOIN_FAILED',
+            message: 'Unable to subscribe to room updates.'
+          };
+          socket.emit(SOCKET_EVENTS.ROOM_ERROR, errPayload);
+          ack?.(errPayload);
+        }
+      }
+    );
+
+    socket.on(
+      SOCKET_EVENTS.SYNC_REQUEST,
+      async (payload: { roomCode?: string }, ack?: (res: Record<string, unknown>) => void) => {
+        try {
+          const roomCode = payload?.roomCode?.trim().toUpperCase();
+          if (!roomCode) {
+            ack?.({ ok: false, code: 'INVALID_ROOM_CODE', message: 'Room code is required.' });
+            return;
+          }
+          const fullRoom = await prisma.room.findUnique({
+            where: { code: roomCode },
+            include: ROOM_RELATIONS_INCLUDE
+          });
+          if (!fullRoom) {
+            ack?.({ ok: false, code: 'ROOM_NOT_FOUND', message: 'Room not found.' });
+            return;
+          }
+          const participant = fullRoom.participants.find(
+            (p) => p.guestSessionId === socket.guestSession!.id && !p.isRemoved && !p.leftAt
+          );
+          if (!participant) {
+            ack?.({ ok: false, code: 'NOT_A_MEMBER', message: 'Active membership required.' });
+            return;
+          }
+
+          socket.join(SOCKET_ROOMS.room(fullRoom.code));
+          socket.join(SOCKET_ROOMS.participant(participant.id));
+          socket.joinedRooms?.set(fullRoom.code, participant.id);
+
+          const presenceKey = onlineSocketsKey(fullRoom.code, participant.id);
+          await redis.sadd(presenceKey, socket.id);
+          await redis.expire(presenceKey, 86400);
+          if (!participant.isConnected) {
+            await prisma.roomParticipant.update({
+              where: { id: participant.id },
+              data: { isConnected: true, lastHeartbeatAt: new Date() }
+            });
+          } else {
+            await prisma.roomParticipant.update({
+              where: { id: participant.id },
+              data: { lastHeartbeatAt: new Date() }
+            });
+          }
+
+          const personalSnapshot = mapRoomToDetailDto(fullRoom, true);
           socket.emit(SOCKET_EVENTS.ROOM_STATE, personalSnapshot);
 
           if (fullRoom.status !== DbRoomStatus.LOBBY) {
             const auctionRoom = await prisma.room.findUnique({
-              where: { id: room.id },
+              where: { id: fullRoom.id },
               include: AUCTION_ROOM_INCLUDE
             });
             if (auctionRoom) {
@@ -187,35 +284,42 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
             }
           }
 
-          if (wasDisconnected) {
-            const roomWideSnapshot = mapRoomToDetailDto(fullRoom, false);
-            socket.to(SOCKET_ROOMS.room(room.code)).emit(SOCKET_EVENTS.ROOM_STATE, roomWideSnapshot);
-          }
+          const ackPayload = {
+            ok: true,
+            roomCode: fullRoom.code,
+            version: fullRoom.version,
+            serverTimeMs: Date.now()
+          };
+          socket.emit(SOCKET_EVENTS.SYNC_ACK, ackPayload);
+          ack?.(ackPayload);
+        } catch (err) {
+          console.error('[Socket] SYNC_REQUEST error:', err);
+          ack?.({ ok: false, code: 'SYNC_FAILED', message: 'State resynchronization failed.' });
         }
-      } catch (err) {
-        console.error('[Socket] ROOM_JOIN error:', err);
-        socket.emit(SOCKET_EVENTS.ROOM_ERROR, {
-          code: 'JOIN_FAILED',
-          message: 'Unable to subscribe to room updates.'
-        });
       }
-    });
+    );
 
     socket.on(
       SOCKET_EVENTS.BID_SUBMIT,
-      async (payload: {
-        roomCode?: string;
-        lotId?: string;
-        bidAmountLakhs?: number;
-        idempotencyKey?: string;
-      }) => {
+      async (
+        payload: {
+          roomCode?: string;
+          lotId?: string;
+          bidAmountLakhs?: number;
+          idempotencyKey?: string;
+        },
+        ack?: (res: Record<string, unknown>) => void
+      ) => {
         try {
           const roomCode = payload?.roomCode?.trim().toUpperCase();
           if (!roomCode || !socket.joinedRooms?.has(roomCode)) {
-            socket.emit(SOCKET_EVENTS.BID_REJECTED, {
+            const errPayload = {
+              ok: false,
               code: 'NOT_A_MEMBER',
               message: 'Join the room before placing bids.'
-            });
+            };
+            socket.emit(SOCKET_EVENTS.BID_REJECTED, errPayload);
+            ack?.(errPayload);
             return;
           }
 
@@ -225,12 +329,20 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
             idempotencyKey: payload.idempotencyKey
           });
 
-          await AuctionService.placeBid(roomCode, socket.guestSession!.id, parsed);
+          const bidResult = await AuctionService.placeBid(roomCode, socket.guestSession!.id, parsed);
+          ack?.({
+            ok: true,
+            ...bidResult,
+            serverTimeMs: Date.now()
+          });
         } catch (err: any) {
-          socket.emit(SOCKET_EVENTS.BID_REJECTED, {
+          const errPayload = {
+            ok: false,
             code: err?.code || 'BID_REJECTED',
             message: err?.message || 'Bid rejected by server.'
-          });
+          };
+          socket.emit(SOCKET_EVENTS.BID_REJECTED, errPayload);
+          ack?.(errPayload);
         }
       }
     );

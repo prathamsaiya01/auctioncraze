@@ -30,8 +30,11 @@ import { FranchiseEmblem } from '@/components/ui/FranchiseEmblem';
 import { Modal } from '@/components/ui/Modal';
 import { PlayerProfileModal } from '@/components/players/PlayerProfileModal';
 import { SquadIntelligencePanel } from '@/components/room/SquadIntelligencePanel';
+import { TradeCentreModal } from '@/components/room/TradeCentreModal';
+import { FranchiseNicknameEditor } from '@/components/room/FranchiseNicknameEditor';
 import {
   ArrowLeft,
+  ArrowLeftRight,
   Award,
   BarChart3,
   CheckCircle2,
@@ -63,7 +66,7 @@ import {
   XCircle
 } from 'lucide-react';
 
-type SocketStatus = 'CONNECTED' | 'CONNECTING' | 'DISCONNECTED';
+type SocketStatus = 'CONNECTED' | 'RECONNECTING' | 'SYNCHRONIZING' | 'DISCONNECTED';
 
 interface FeedEvent {
   id: string;
@@ -152,7 +155,9 @@ export default function LiveAuctionPage() {
   const [auction, setAuction] = useState<AuctionStateSnapshotDto | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [socketStatus, setSocketStatus] = useState<SocketStatus>('CONNECTING');
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>('SYNCHRONIZING');
+  const [showTradeCentre, setShowTradeCentre] = useState(false);
+  const [pendingTradesCount, setPendingTradesCount] = useState(0);
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [isBidding, setIsBidding] = useState(false);
@@ -175,7 +180,14 @@ export default function LiveAuctionPage() {
   // Server-authoritative timer offset (`serverTimeMs - Date.now()`) & ticking seconds
   const clockOffsetRef = useRef<number>(0);
   const lastTickSecRef = useRef<number | null>(null);
+  const soundPrefsRef = useRef({ isMuted: false, volume: 0.65 });
+  const myFranchiseIdRef = useRef<string | null>(null);
+  const fetchSnapshotRef = useRef<() => Promise<void>>(async () => {});
   const [liveRemainingSeconds, setLiveRemainingSeconds] = useState<number>(0);
+
+  useEffect(() => {
+    soundPrefsRef.current = { isMuted, volume };
+  }, [isMuted, volume]);
 
   const pushFeed = useCallback((text: string, tone: FeedEvent['tone'] = 'electric') => {
     setFeed((prev) => [
@@ -239,6 +251,10 @@ export default function LiveAuctionPage() {
     fetchAuctionSnapshot();
   }, [isHydrated, fetchAuctionSnapshot]);
 
+  useEffect(() => {
+    fetchSnapshotRef.current = fetchAuctionSnapshot;
+  }, [fetchAuctionSnapshot]);
+
   // Smooth countdown interval driven strictly by server deadlineMs + clockOffset
   useEffect(() => {
     const compute = () => {
@@ -280,26 +296,61 @@ export default function LiveAuctionPage() {
     return () => clearInterval(interval);
   }, [auction, isMuted, volume]);
 
-  // Real-time incremental Socket.IO listener setup
+  // Real-time incremental Socket.IO listener setup (stable ref dependencies; zero churn on audio toggles)
   useEffect(() => {
     if (!token || !roomCode) return;
     const socket = getRoomSocket(token);
-    setSocketStatus(socket.connected ? 'CONNECTED' : 'CONNECTING');
+    setSocketStatus('SYNCHRONIZING');
 
     const joinRoom = () => {
-      setSocketStatus('CONNECTED');
+      setSocketStatus('SYNCHRONIZING');
       socket.emit(SOCKET_EVENTS.ROOM_JOIN, { roomCode }, (ack: any) => {
-        if (ack && !ack.ok && ack.code === 'NOT_MEMBER') {
+        if (ack?.ok) {
+          syncClock(ack.serverTimeMs);
+          setSocketStatus('CONNECTED');
+        } else if (ack && ack.code === 'NOT_MEMBER') {
+          setSocketStatus('DISCONNECTED');
           setActionError('You are not an active participant in this auction room.');
+        } else {
+          setSocketStatus('CONNECTED');
+        }
+      });
+    };
+
+    const requestSync = () => {
+      if (!socket.connected) {
+        setSocketStatus('RECONNECTING');
+        socket.connect();
+        return;
+      }
+      setSocketStatus('SYNCHRONIZING');
+      socket.emit(SOCKET_EVENTS.SYNC_REQUEST, { roomCode }, (ack: any) => {
+        if (ack?.ok) {
+          syncClock(ack.serverTimeMs);
+          setSocketStatus('CONNECTED');
         }
       });
     };
 
     const onDisconnect = () => setSocketStatus('DISCONNECTED');
+    const onReconnectAttempt = () => setSocketStatus('RECONNECTING');
+    const onOnline = () => requestSync();
+    const onOffline = () => setSocketStatus('DISCONNECTED');
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        requestSync();
+      }
+    };
 
     const onAuctionState = (snap: AuctionStateSnapshotDto) => {
       syncClock(snap.serverTimeMs);
-      setAuction(snap);
+      setSocketStatus('CONNECTED');
+      setAuction((prev) => {
+        if (prev && snap.version < prev.version) {
+          return prev;
+        }
+        return snap;
+      });
       if (snap.auctionStage === 'PLAYER_SOLD' && snap.currentLot?.winningFranchiseCode) {
         setSettlementOverlay({
           type: 'SOLD',
@@ -307,7 +358,10 @@ export default function LiveAuctionPage() {
           playingRole: snap.currentLot.player.playingRole,
           isOverseas: snap.currentLot.player.isOverseas,
           franchiseCode: snap.currentLot.winningFranchiseCode,
-          franchiseName: snap.currentLot.winningFranchiseName || snap.currentLot.winningFranchiseCode,
+          franchiseName:
+            snap.currentLot.winningFranchiseDisplayName ||
+            snap.currentLot.winningFranchiseName ||
+            snap.currentLot.winningFranchiseCode,
           franchiseColor: snap.currentLot.winningFranchiseColor || '#D4AF37',
           priceLakhs: snap.currentLot.currentBidLakhs
         });
@@ -325,7 +379,7 @@ export default function LiveAuctionPage() {
 
     const onAuctionStarted = () => {
       pushFeed('Auction broadcast started!', 'gold');
-      fetchAuctionSnapshot();
+      fetchSnapshotRef.current();
     };
 
     const onPlayerLotStarted = (evt: any) => {
@@ -376,6 +430,11 @@ export default function LiveAuctionPage() {
             winningFranchiseId: bid.franchiseId,
             winningFranchiseCode: bid.franchiseCode,
             winningFranchiseName: evt.winningFranchiseName ?? bid.franchiseCode,
+            winningFranchiseDisplayName:
+              evt.winningFranchiseDisplayName ??
+              bid.franchiseDisplayName ??
+              evt.winningFranchiseName ??
+              bid.franchiseCode,
             winningFranchiseColor: bid.franchiseColor,
             winningOwnerName: bid.bidderDisplayName,
             bids: nextBids
@@ -383,9 +442,9 @@ export default function LiveAuctionPage() {
         };
       });
 
-      playBidChime(isMuted, volume);
+      playBidChime(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
       pushFeed(
-        `${bid.franchiseCode} (${bid.bidderDisplayName}) bids ${formatLakhs(bid.bidAmountLakhs)}`,
+        `${bid.franchiseDisplayName || bid.franchiseCode} (${bid.bidderDisplayName}) bids ${formatLakhs(bid.bidAmountLakhs)}`,
         'gold'
       );
     };
@@ -438,14 +497,14 @@ export default function LiveAuctionPage() {
     };
 
     const onPlayerSold = (evt: any) => {
-      playSoldGavel(isMuted, volume);
+      playSoldGavel(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
       setSettlementOverlay({
         type: 'SOLD',
         playerName: evt.playerName,
         playingRole: evt.playingRole,
         isOverseas: Boolean(evt.isOverseas),
         franchiseCode: evt.franchiseCode,
-        franchiseName: evt.franchiseName,
+        franchiseName: evt.franchiseDisplayName || evt.franchiseName,
         franchiseColor: evt.franchiseColor || '#D4AF37',
         priceLakhs: evt.soldPriceLakhs
       });
@@ -461,6 +520,7 @@ export default function LiveAuctionPage() {
           status: LotStatus.SOLD,
           soldPriceLakhs: evt.soldPriceLakhs,
           franchiseCode: evt.franchiseCode,
+          franchiseDisplayName: evt.franchiseDisplayName || evt.franchiseCode,
           franchiseColor: evt.franchiseColor,
           settledAt: evt.settledAt || new Date().toISOString()
         };
@@ -478,13 +538,13 @@ export default function LiveAuctionPage() {
       });
 
       pushFeed(
-        `SOLD! ${evt.playerName} to ${evt.franchiseCode} for ${formatLakhs(evt.soldPriceLakhs)}`,
+        `SOLD! ${evt.playerName} to ${evt.franchiseDisplayName || evt.franchiseCode} for ${formatLakhs(evt.soldPriceLakhs)}`,
         'sold'
       );
     };
 
     const onPlayerUnsold = (evt: any) => {
-      playUnsoldTone(isMuted, volume);
+      playUnsoldTone(soundPrefsRef.current.isMuted, soundPrefsRef.current.volume);
       setSettlementOverlay({
         type: 'UNSOLD',
         playerName: evt.playerName,
@@ -589,11 +649,46 @@ export default function LiveAuctionPage() {
     };
 
     const onParticipantEvent = () => {
-      fetchAuctionSnapshot();
+      fetchSnapshotRef.current();
+    };
+
+    const onTradeProposed = (evt: any) => {
+      const propCode = evt?.trade?.proposerFranchiseDisplayName || evt?.trade?.proposerFranchiseCode || 'Franchise';
+      const recvCode = evt?.trade?.receiverFranchiseDisplayName || evt?.trade?.receiverFranchiseCode || 'Franchise';
+      pushFeed(`Trade proposal: ${propCode} ↔ ${recvCode}`, 'electric');
+      if (evt?.trade?.receiverFranchiseId && evt.trade.receiverFranchiseId === myFranchiseIdRef.current) {
+        setPendingTradesCount((c) => c + 1);
+      }
+    };
+
+    const onTradeAccepted = (evt: any) => {
+      const propCode = evt?.trade?.proposerFranchiseDisplayName || evt?.trade?.proposerFranchiseCode || 'Franchise';
+      const recvCode = evt?.trade?.receiverFranchiseDisplayName || evt?.trade?.receiverFranchiseCode || 'Franchise';
+      pushFeed(`TRADE COMPLETED: ${propCode} ↔ ${recvCode}`, 'sold');
+      if (evt?.trade?.receiverFranchiseId === myFranchiseIdRef.current) {
+        setPendingTradesCount((c) => Math.max(0, c - 1));
+      }
+    };
+
+    const onTradeRejectedOrCancelled = (evt: any) => {
+      pushFeed(`Trade proposal ${evt?.trade?.status?.toLowerCase() || 'closed'}.`, 'gold');
+      if (evt?.trade?.receiverFranchiseId === myFranchiseIdRef.current) {
+        setPendingTradesCount((c) => Math.max(0, c - 1));
+      }
+    };
+
+    const onIdentityOrSettingsChanged = (evt: any) => {
+      if (evt?.displayName && evt?.franchiseCode) {
+        pushFeed(`${evt.franchiseCode} updated identity to ${evt.displayName}`, 'gold');
+      } else if (evt?.settings) {
+        pushFeed('Host updated live room feature controls.', 'gold');
+      }
+      fetchSnapshotRef.current();
     };
 
     socket.on('connect', joinRoom);
     socket.on('disconnect', onDisconnect);
+    socket.io.on('reconnect_attempt', onReconnectAttempt);
     socket.on(SOCKET_EVENTS.AUCTION_STATE, onAuctionState);
     socket.on(SOCKET_EVENTS.AUCTION_STARTED, onAuctionStarted);
     socket.on(SOCKET_EVENTS.PLAYER_LOT_STARTED, onPlayerLotStarted);
@@ -612,6 +707,20 @@ export default function LiveAuctionPage() {
     socket.on(SOCKET_EVENTS.HOST_CHANGED, onParticipantEvent);
     socket.on(SOCKET_EVENTS.PARTICIPANT_JOINED, onParticipantEvent);
     socket.on(SOCKET_EVENTS.PARTICIPANT_LEFT, onParticipantEvent);
+    socket.on(SOCKET_EVENTS.TRADE_PROPOSED, onTradeProposed);
+    socket.on(SOCKET_EVENTS.TRADE_ACCEPTED, onTradeAccepted);
+    socket.on(SOCKET_EVENTS.TRADE_REJECTED, onTradeRejectedOrCancelled);
+    socket.on(SOCKET_EVENTS.TRADE_CANCELLED, onTradeRejectedOrCancelled);
+    socket.on(SOCKET_EVENTS.FRANCHISE_IDENTITY_UPDATED, onIdentityOrSettingsChanged);
+    socket.on(SOCKET_EVENTS.ROOM_LIVE_SETTINGS_UPDATED, onIdentityOrSettingsChanged);
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', onOnline);
+      window.addEventListener('offline', onOffline);
+    }
 
     if (socket.connected) {
       joinRoom();
@@ -620,6 +729,7 @@ export default function LiveAuctionPage() {
     return () => {
       socket.off('connect', joinRoom);
       socket.off('disconnect', onDisconnect);
+      socket.io.off('reconnect_attempt', onReconnectAttempt);
       socket.off(SOCKET_EVENTS.AUCTION_STATE, onAuctionState);
       socket.off(SOCKET_EVENTS.AUCTION_STARTED, onAuctionStarted);
       socket.off(SOCKET_EVENTS.PLAYER_LOT_STARTED, onPlayerLotStarted);
@@ -638,8 +748,21 @@ export default function LiveAuctionPage() {
       socket.off(SOCKET_EVENTS.HOST_CHANGED, onParticipantEvent);
       socket.off(SOCKET_EVENTS.PARTICIPANT_JOINED, onParticipantEvent);
       socket.off(SOCKET_EVENTS.PARTICIPANT_LEFT, onParticipantEvent);
+      socket.off(SOCKET_EVENTS.TRADE_PROPOSED, onTradeProposed);
+      socket.off(SOCKET_EVENTS.TRADE_ACCEPTED, onTradeAccepted);
+      socket.off(SOCKET_EVENTS.TRADE_REJECTED, onTradeRejectedOrCancelled);
+      socket.off(SOCKET_EVENTS.TRADE_CANCELLED, onTradeRejectedOrCancelled);
+      socket.off(SOCKET_EVENTS.FRANCHISE_IDENTITY_UPDATED, onIdentityOrSettingsChanged);
+      socket.off(SOCKET_EVENTS.ROOM_LIVE_SETTINGS_UPDATED, onIdentityOrSettingsChanged);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', onOnline);
+        window.removeEventListener('offline', onOffline);
+      }
     };
-  }, [token, roomCode, syncClock, fetchAuctionSnapshot, pushFeed, isMuted, volume]);
+  }, [token, roomCode, syncClock, pushFeed]);
 
   const myParticipant = useMemo(() => {
     if (!auction || !session) return null;
@@ -665,11 +788,34 @@ export default function LiveAuctionPage() {
     myFranchise && myParticipant && myParticipant.role !== RoomRole.SPECTATOR
   );
 
+  useEffect(() => {
+    myFranchiseIdRef.current = myFranchise?.id || null;
+  }, [myFranchise?.id]);
+
+  useEffect(() => {
+    if (!isActiveOwner || !token || !roomCode) return;
+    api
+      .get(`/rooms/${roomCode}/trades`)
+      .then((res: any) => {
+        setPendingTradesCount((res?.data?.pendingIncoming || []).length);
+      })
+      .catch(() => {});
+  }, [isActiveOwner, token, roomCode, auction?.version]);
+
   const isOwnInspectedFranchise = Boolean(
     isActiveOwner && inspectedFranchise && myFranchise && inspectedFranchise.id === myFranchise.id
   );
 
   const bidCheck = useMemo(() => {
+    if (socketStatus !== 'CONNECTED') {
+      return {
+        canBid: false,
+        reason:
+          socketStatus === 'SYNCHRONIZING'
+            ? 'Synchronizing live auction state — bidding unlocks in a moment.'
+            : 'Connection lost — reconnecting to auction server before bidding.'
+      };
+    }
     if (!auction || !auction.currentLot) {
       return { canBid: false, reason: 'No active player lot on stage.' };
     }
@@ -707,7 +853,7 @@ export default function LiveAuctionPage() {
       };
     }
     return { canBid: true, reason: null };
-  }, [auction, myParticipant, myFranchise]);
+  }, [auction, myParticipant, myFranchise, socketStatus]);
 
   const jumpBidOptions = useMemo(() => {
     if (!auction?.currentLot) return [];
@@ -736,6 +882,24 @@ export default function LiveAuctionPage() {
       setActionError(err?.message || 'Unable to place bid.');
     } finally {
       setIsBidding(false);
+    }
+  };
+
+  const handleToggleLiveSetting = async (patch: {
+    allowPlayerTrades?: boolean;
+    allowCustomTeamName?: boolean;
+    allowLateJoin?: boolean;
+  }) => {
+    if (!isHost || isHostActing) return;
+    setActionError(null);
+    setIsHostActing(true);
+    try {
+      await api.patch(`/rooms/${roomCode}/live-settings`, patch);
+      await fetchAuctionSnapshot();
+    } catch (err: any) {
+      setActionError(err?.message || 'Unable to update live room settings.');
+    } finally {
+      setIsHostActing(false);
     }
   };
 
@@ -809,7 +973,7 @@ export default function LiveAuctionPage() {
     <main className="min-h-screen bg-stadium-bg pb-12">
       {/* Broadcast Top Bar */}
       <header className="sticky top-0 z-30 border-b border-stadium-border bg-stadium-bg/90 backdrop-blur-lg">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 min-h-16 py-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <Link
               href={`/room/${auction.roomCode}`}
@@ -836,15 +1000,26 @@ export default function LiveAuctionPage() {
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {isActiveOwner && (
-              <Link
-                href={`/intelligence?roomCode=${encodeURIComponent(roomCode)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Button variant="electric" size="sm" data-testid="nav-owner-intelligence-btn">
-                  Owner Intelligence
+              <>
+                <Button
+                  variant={pendingTradesCount > 0 ? 'gold' : 'surface'}
+                  size="sm"
+                  onClick={() => setShowTradeCentre(true)}
+                  leftIcon={<ArrowLeftRight className="w-3.5 h-3.5" />}
+                  data-testid="open-trade-centre-btn"
+                >
+                  Trade Centre{pendingTradesCount > 0 ? ` (${pendingTradesCount})` : ''}
                 </Button>
-              </Link>
+                <Link
+                  href={`/intelligence?roomCode=${encodeURIComponent(roomCode)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button variant="electric" size="sm" data-testid="nav-owner-intelligence-btn">
+                    Owner Intelligence
+                  </Button>
+                </Link>
+              </>
             )}
             {isHost && (
               <Badge tone="gold" className="hidden md:inline-flex">
@@ -887,10 +1062,45 @@ export default function LiveAuctionPage() {
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
 
-            <Badge tone={socketStatus === 'CONNECTED' ? 'sold' : 'unsold'}>
-              {socketStatus === 'CONNECTED' ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-              <span className="hidden sm:inline">{socketStatus === 'CONNECTED' ? 'LIVE' : 'SYNCING'}</span>
-            </Badge>
+            <button
+              type="button"
+              onClick={() => {
+                if (token) {
+                  const s = getRoomSocket(token);
+                  setSocketStatus('SYNCHRONIZING');
+                  s.emit(SOCKET_EVENTS.SYNC_REQUEST, { roomCode }, (ack: any) => {
+                    if (ack?.ok) setSocketStatus('CONNECTED');
+                  });
+                }
+              }}
+              data-testid="connection-status-pill"
+              title="Click to resynchronize with auction server"
+            >
+              <Badge
+                tone={
+                  socketStatus === 'CONNECTED'
+                    ? 'sold'
+                    : socketStatus === 'SYNCHRONIZING'
+                    ? 'electric'
+                    : 'unsold'
+                }
+              >
+                {socketStatus === 'CONNECTED' ? (
+                  <Wifi className="w-3 h-3" />
+                ) : (
+                  <WifiOff className="w-3 h-3" />
+                )}
+                <span className="hidden sm:inline">
+                  {socketStatus === 'CONNECTED'
+                    ? 'Connected'
+                    : socketStatus === 'SYNCHRONIZING'
+                    ? 'Synchronizing'
+                    : socketStatus === 'RECONNECTING'
+                    ? 'Reconnecting'
+                    : 'Disconnected'}
+                </span>
+              </Badge>
+            </button>
           </div>
         </div>
       </header>
@@ -966,6 +1176,43 @@ export default function LiveAuctionPage() {
                   <Button variant="surface">Back to Room Overview</Button>
                 </Link>
               </div>
+              {isHost && (
+                <div className="pt-3 flex flex-wrap justify-center gap-3 text-xs border-t border-stadium-border/60 mt-3">
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-stadium-text">
+                    <input
+                      type="checkbox"
+                      checked={auction.settings.allowPlayerTrades}
+                      disabled={isHostActing}
+                      onChange={(e) => handleToggleLiveSetting({ allowPlayerTrades: e.target.checked })}
+                      data-testid="completed-toggle-trades"
+                      className="rounded border-stadium-border"
+                    />
+                    <span>Allow Post-Auction Trades</span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer text-stadium-text">
+                    <input
+                      type="checkbox"
+                      checked={auction.settings.allowCustomTeamName}
+                      disabled={isHostActing}
+                      onChange={(e) => handleToggleLiveSetting({ allowCustomTeamName: e.target.checked })}
+                      data-testid="completed-toggle-custom-names"
+                      className="rounded border-stadium-border"
+                    />
+                    <span>Allow Custom Team Nicknames</span>
+                  </label>
+                </div>
+              )}
+              {isActiveOwner && auction.settings.allowCustomTeamName && myFranchise && (
+                <div className="pt-2 flex justify-center">
+                  <FranchiseNicknameEditor
+                    roomCode={auction.roomCode}
+                    presetCode={myFranchise.presetCode}
+                    currentSuffix={myFranchise.customSuffix}
+                    enabled={auction.settings.allowCustomTeamName}
+                    onUpdated={fetchAuctionSnapshot}
+                  />
+                </div>
+              )}
             </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -983,7 +1230,7 @@ export default function LiveAuctionPage() {
                         secondaryColor={f.secondaryColor}
                       />
                       <div className="min-w-0">
-                        <h3 className="font-display text-xl font-bold text-white truncate">{f.name}</h3>
+                        <h3 className="font-display text-xl font-bold text-white truncate">{f.displayName || f.name}</h3>
                         <p className="text-xs text-stadium-muted truncate">
                           {f.ownerDisplayName ? `Owner: ${f.ownerDisplayName}` : 'Unclaimed Franchise'}
                         </p>
@@ -1059,7 +1306,7 @@ export default function LiveAuctionPage() {
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
                                 <span className="font-display font-bold text-sm text-white truncate">
-                                  {f.presetCode}
+                                  {f.displayName && f.displayName !== f.name ? f.displayName : f.presetCode}
                                 </span>
                                 {isMine && (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-electric-500/20 text-electric-400 font-bold">
@@ -1389,7 +1636,7 @@ export default function LiveAuctionPage() {
                             />
                             <div className="text-left">
                               <p className="font-display text-base font-bold text-white leading-tight">
-                                {currentLot.winningFranchiseName}
+                                {currentLot.winningFranchiseDisplayName || currentLot.winningFranchiseName}
                               </p>
                               <p className="text-[11px] text-stadium-muted">
                                 {currentLot.winningOwnerName || 'Franchise Owner'}
@@ -1448,7 +1695,7 @@ export default function LiveAuctionPage() {
                       {myParticipant?.role === RoomRole.SPECTATOR
                         ? 'SPECTATOR VIEWPORT'
                         : myFranchise
-                        ? `BIDDING PADDLE — ${myFranchise.name.toUpperCase()}`
+                        ? `BIDDING PADDLE — ${(myFranchise.displayName || myFranchise.name).toUpperCase()}`
                         : 'BIDDING PADDLE'}
                     </h3>
                   </div>
@@ -1503,6 +1750,15 @@ export default function LiveAuctionPage() {
                         );
                       })}
                     </div>
+                    {myFranchise && auction.settings.allowCustomTeamName && (
+                      <FranchiseNicknameEditor
+                        roomCode={auction.roomCode}
+                        presetCode={myFranchise.presetCode}
+                        currentSuffix={myFranchise.customSuffix}
+                        enabled={auction.settings.allowCustomTeamName}
+                        onUpdated={fetchAuctionSnapshot}
+                      />
+                    )}
                   </div>
                 )}
               </Card>
@@ -1649,6 +1905,43 @@ export default function LiveAuctionPage() {
                         Re-Enter Unsold ({auction.unsoldCount})
                       </Button>
                     )}
+                  </div>
+
+                  {/* Live Room Feature Toggles (Trades, Custom Team Names, Late Join) */}
+                  <div className="pt-3 border-t border-stadium-border/60 flex flex-wrap gap-4 text-xs">
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-stadium-text">
+                      <input
+                        type="checkbox"
+                        checked={auction.settings.allowPlayerTrades}
+                        disabled={isHostActing}
+                        onChange={(e) => handleToggleLiveSetting({ allowPlayerTrades: e.target.checked })}
+                        data-testid="host-toggle-trades"
+                        className="rounded border-stadium-border"
+                      />
+                      <span>Allow Player Trades</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-stadium-text">
+                      <input
+                        type="checkbox"
+                        checked={auction.settings.allowCustomTeamName}
+                        disabled={isHostActing}
+                        onChange={(e) => handleToggleLiveSetting({ allowCustomTeamName: e.target.checked })}
+                        data-testid="host-toggle-custom-names"
+                        className="rounded border-stadium-border"
+                      />
+                      <span>Allow Custom Team Names</span>
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-stadium-text">
+                      <input
+                        type="checkbox"
+                        checked={auction.settings.allowLateJoin}
+                        disabled={isHostActing}
+                        onChange={(e) => handleToggleLiveSetting({ allowLateJoin: e.target.checked })}
+                        data-testid="host-toggle-late-join"
+                        className="rounded border-stadium-border"
+                      />
+                      <span>Allow Late Joining</span>
+                    </label>
                   </div>
                 </Card>
               )}
@@ -1829,7 +2122,7 @@ export default function LiveAuctionPage() {
                               <p className="text-xs font-semibold text-white truncate">{res.playerName}</p>
                               <p className="text-[10px] text-stadium-muted">
                                 {res.status === LotStatus.SOLD
-                                  ? `${res.franchiseCode} • ${formatLakhs(res.soldPriceLakhs || 0)}`
+                                  ? `${res.franchiseDisplayName || res.franchiseCode} • ${formatLakhs(res.soldPriceLakhs || 0)}`
                                   : 'Passed Unsold'}
                               </p>
                             </div>
@@ -1894,7 +2187,7 @@ export default function LiveAuctionPage() {
           setInspectedFranchiseId(null);
           setSquadTab('ROSTER');
         }}
-        title={inspectedFranchise ? `${inspectedFranchise.name} (${inspectedFranchise.presetCode})` : ''}
+        title={inspectedFranchise ? `${inspectedFranchise.displayName || inspectedFranchise.name} (${inspectedFranchise.presetCode})` : ''}
         subtitle={
           inspectedFranchise
             ? `Remaining Purse: ${formatLakhs(inspectedFranchise.remainingPurseLakhs)} • Squad ${inspectedFranchise.squadCount}/${auction.settings.maxSquadSize} • Overseas ${inspectedFranchise.overseasCount}/${auction.settings.maxOverseas}`
@@ -1998,6 +2291,23 @@ export default function LiveAuctionPage() {
         intelligenceRoomCode={roomCode}
         canViewIntelligence={isActiveOwner}
       />
+
+      {isActiveOwner && myFranchise && (
+        <TradeCentreModal
+          open={showTradeCentre}
+          onClose={() => setShowTradeCentre(false)}
+          roomCode={auction.roomCode}
+          allowPlayerTrades={auction.settings.allowPlayerTrades}
+          roomStatus={auction.roomStatus}
+          myFranchise={myFranchise}
+          franchises={auction.franchises}
+          maxSquadSize={auction.settings.maxSquadSize}
+          maxOverseas={auction.settings.maxOverseas}
+          onTradeChanged={() => {
+            fetchAuctionSnapshot();
+          }}
+        />
+      )}
     </main>
   );
 }

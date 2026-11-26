@@ -11,7 +11,8 @@ import {
   AuctionStateSnapshotDto,
   LotStatus,
   RoomStatus,
-  SOCKET_EVENTS
+  SOCKET_EVENTS,
+  formatFranchiseDisplayName
 } from '@auctioncraze/shared';
 import { AppError } from '../../middleware/errorHandler';
 import { emitToRoom } from '../../sockets/socketServer';
@@ -361,6 +362,12 @@ export class AuctionService {
           roundNumber: lotRound,
           franchiseId: franchise.id,
           franchiseCode: franchise.presetCode,
+          franchiseDisplayName: formatFranchiseDisplayName(
+            franchise.name,
+            franchise.presetCode,
+            franchise.customSuffix,
+            !!room.allowCustomTeamName
+          ),
           franchiseColor: franchise.primaryColor,
           participantId: participant.id,
           bidderDisplayName: participant.displayName,
@@ -369,6 +376,12 @@ export class AuctionService {
           createdAt: createdBid.createdAt.toISOString()
         },
         franchiseName: franchise.name,
+        franchiseDisplayName: formatFranchiseDisplayName(
+          franchise.name,
+          franchise.presetCode,
+          franchise.customSuffix,
+          !!room.allowCustomTeamName
+        ),
         nextBidLakhs,
         incrementLakhs,
         timerExtended,
@@ -396,6 +409,7 @@ export class AuctionService {
         lotId: txResult.lotId,
         bid: txResult.bidDto,
         winningFranchiseName: txResult.franchiseName,
+        winningFranchiseDisplayName: txResult.franchiseDisplayName,
         nextBidLakhs: txResult.nextBidLakhs,
         incrementLakhs: txResult.incrementLakhs,
         serverTimeMs: nowMs
@@ -745,6 +759,7 @@ export class AuctionService {
         franchiseId: updatedFranDto.id,
         franchiseCode: updatedFranDto.presetCode,
         franchiseName: updatedFranDto.name,
+        franchiseDisplayName: updatedFranDto.displayName,
         franchiseColor: updatedFranDto.primaryColor,
         soldPriceLakhs: txResult.salePrice,
         settledAt: new Date(nowMs).toISOString()

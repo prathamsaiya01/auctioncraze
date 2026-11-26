@@ -72,7 +72,7 @@ export function FranchiseReportView({ report, onInspectPlayer }: FranchiseReport
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="font-display text-3xl font-extrabold text-white tracking-wide">
-                  {report.franchiseName} ({report.franchiseCode})
+                  {report.franchiseDisplayName || report.franchiseName} ({report.franchiseCode})
                 </h2>
                 {report.rank ? (
                   <Badge tone="gold">Rank #{report.rank}</Badge>

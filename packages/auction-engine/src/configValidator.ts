@@ -31,8 +31,8 @@ export function validateAuctionConfiguration(cfg: AuctionConfigurationInput): {
   if (cfg.maxOverseas < 0 || cfg.maxOverseas > cfg.maxSquadSize) {
     return { isValid: false, errorMessage: 'Max overseas players cannot exceed max squad size.' };
   }
-  if (cfg.minOwnersRequired < 1 || cfg.minOwnersRequired > 10) {
-    return { isValid: false, errorMessage: 'Minimum owners required must be between 1 and 10.' };
+  if (cfg.minOwnersRequired < 2 || cfg.minOwnersRequired > 10) {
+    return { isValid: false, errorMessage: 'Minimum owners required must be between 2 and 10.' };
   }
   if (cfg.defaultBasePriceLakhs < 5 || cfg.defaultBasePriceLakhs > cfg.initialPurseLakhs) {
     return { isValid: false, errorMessage: 'Default base price must be between 5L and total purse.' };
