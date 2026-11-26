@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import {
   extendTimerSchema,
   placeBidSchema,
+  requeueUnsoldSchema,
   resolveLotSchema,
   roomCodeParamSchema
 } from '@auctioncraze/shared';
@@ -107,6 +108,21 @@ export class AuctionController {
     try {
       const { code } = roomCodeParamSchema.parse(req.params);
       const state = await AuctionService.skipPlayer(code, req.guestSession!.id);
+      res.json({ success: true, data: state });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  static async requeueUnsold(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { code } = roomCodeParamSchema.parse(req.params);
+      const { lotIds } = requeueUnsoldSchema.parse(req.body || {});
+      const state = await AuctionService.requeueUnsold(code, req.guestSession!.id, lotIds);
       res.json({ success: true, data: state });
     } catch (err) {
       next(err);

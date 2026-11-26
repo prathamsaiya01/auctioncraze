@@ -217,22 +217,29 @@ model RoomParticipant {
 // -------------------------------------------------------------
 
 model MasterPlayer {
-  id              String        @id @default(uuid())
-  externalKey     String?       @unique
-  fullName        String
-  nationality     String        @default("India")
-  isOverseas      Boolean       @default(false)
-  dateOfBirth     DateTime?
-  age             Int?
-  playingRole     CricketRole   @default(ALL_ROUNDER)
-  battingStyle    BattingStyle  @default(RIGHT_HAND)
-  bowlingStyle    BowlingStyle  @default(NONE)
-  basePriceLakhs  Int           @default(50)
-  imageUrl        String?
-  teamHistoryJson Json?
-  isActive        Boolean       @default(true)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id               String        @id @default(uuid())
+  externalKey      String?       @unique
+  cricsheetId      String?       @unique
+  cricinfoId       String?
+  fullName         String
+  nationality      String?
+  isOverseas       Boolean       @default(false)
+  dateOfBirth      DateTime?
+  age              Int?
+  playingRole      CricketRole   @default(ALL_ROUNDER)
+  secondaryRole    CricketRole?
+  battingStyle     BattingStyle?
+  bowlingStyle     BowlingStyle?
+  basePriceLakhs   Int           @default(50)
+  imageUrl         String?
+  teamHistoryJson  Json?
+  iplDebutYear     Int?
+  iplLastYear      Int?
+  provenanceSource String?
+  seasonCoverage   String?
+  isActive         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
   seasonStats PlayerSeasonStat[]
   lots        RoomPlayerLot[]
@@ -240,33 +247,65 @@ model MasterPlayer {
   purchases   Purchase[]
 
   @@index([fullName])
+  @@index([cricinfoId])
+  @@index([nationality, playingRole])
   @@index([playingRole, isOverseas])
 }
 
 model PlayerSeasonStat {
-  id             String   @id @default(uuid())
-  playerId       String
-  season         Int
-  teamCode       String?
-  matches        Int      @default(0)
-  innings        Int      @default(0)
-  runs           Int      @default(0)
-  highestScore   Int      @default(0)
-  battingAverage Decimal  @default(0.00) @db.Decimal(6, 2)
-  strikeRate     Decimal  @default(0.00) @db.Decimal(6, 2)
-  fifties        Int      @default(0)
-  hundreds       Int      @default(0)
-  wickets        Int      @default(0)
-  bowlingAverage Decimal  @default(0.00) @db.Decimal(6, 2)
-  economy        Decimal  @default(0.00) @db.Decimal(6, 2)
-  bestBowling    String?
-  catches        Int      @default(0)
-  stumpings      Int      @default(0)
+  id                String   @id @default(uuid())
+  playerId          String
+  season            Int
+  teamCode          String?
+  matches           Int?
+  innings           Int?
+  battingInnings    Int?
+  bowlingInnings    Int?
+  runs              Int?
+  ballsFaced        Int?
+  notOuts           Int?
+  highestScore      Int?
+  highestScoreText  String?
+  battingAverage    Decimal? @db.Decimal(6, 2)
+  strikeRate        Decimal? @db.Decimal(6, 2)
+  fifties           Int?
+  hundreds          Int?
+  wickets           Int?
+  ballsBowled       Int?
+  runsConceded      Int?
+  bowlingAverage    Decimal? @db.Decimal(6, 2)
+  economy           Decimal? @db.Decimal(6, 2)
+  bowlingStrikeRate Decimal? @db.Decimal(6, 2)
+  bestBowling       String?
+  catches           Int?
+  stumpings         Int?
+  provenanceSource  String?
 
   player MasterPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   @@unique([playerId, season])
   @@index([season])
+}
+
+model PlayerImportBatch {
+  id                 String    @id @default(uuid())
+  sourceName         String
+  fileName           String?
+  importMode         String    // PLAYERS | SEASONS
+  status             String    // PREVIEW | COMMITTED | ROLLED_BACK | FAILED
+  totalRows          Int       @default(0)
+  insertedCount      Int       @default(0)
+  updatedCount       Int       @default(0)
+  skippedCount       Int       @default(0)
+  errorCount         Int       @default(0)
+  insertedPlayerIds  Json?
+  errorsJson         Json?
+  provenanceNotes    String?
+  createdBySessionId String?
+  createdAt          DateTime  @default(now())
+  rolledBackAt       DateTime?
+
+  @@index([createdAt])
 }
 
 // -------------------------------------------------------------
@@ -277,6 +316,7 @@ model RoomPlayerLot {
   id                 String    @id @default(uuid())
   roomId             String
   playerId           String
+  roundNumber        Int       @default(1)
   sequenceOrder      Int
   setCategory        String    @default("Marquee")
   basePriceLakhs     Int
@@ -305,6 +345,7 @@ model Bid {
   franchiseId    String
   participantId  String
   bidAmountLakhs Int
+  roundNumber    Int      @default(1)
   sequenceNumber Int
   idempotencyKey String   @unique
   createdAt      DateTime @default(now())

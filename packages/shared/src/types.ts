@@ -61,22 +61,34 @@ export interface RoomSettingsDto {
 export interface MasterPlayerCatalogDto {
   id: string;
   externalKey: string | null;
+  cricsheetId: string | null;
+  cricinfoId: string | null;
   fullName: string;
-  nationality: string;
+  nationality: string | null;
   isOverseas: boolean;
   age: number | null;
   playingRole: CricketRole;
-  battingStyle: string;
-  bowlingStyle: string;
+  secondaryRole: CricketRole | null;
+  battingStyle: string | null;
+  bowlingStyle: string | null;
   basePriceLakhs: number;
   imageUrl: string | null;
+  iplDebutYear: number | null;
+  iplLastYear: number | null;
+  teamHistory: string[];
+  provenanceSource: string | null;
+  seasonCoverage: string | null;
+  careerMatches?: number | null;
+  careerRuns?: number | null;
+  careerWickets?: number | null;
 }
 
 export interface RoomPlayerLotDto {
   id: string;
   playerId: string;
+  roundNumber: number;
   fullName: string;
-  nationality: string;
+  nationality: string | null;
   isOverseas: boolean;
   playingRole: CricketRole;
   sequenceOrder: number;
@@ -159,7 +171,7 @@ export type AuctionStage =
 export interface SquadMemberDto {
   playerId: string;
   fullName: string;
-  nationality: string;
+  nationality: string | null;
   isOverseas: boolean;
   playingRole: CricketRole;
   priceLakhs: number;
@@ -187,6 +199,8 @@ export interface AuctionFranchiseStateDto {
 export interface AuctionBidDto {
   id: string;
   lotId: string;
+  playerName?: string;
+  roundNumber: number;
   franchiseId: string;
   franchiseCode: string;
   franchiseColor: string;
@@ -199,6 +213,7 @@ export interface AuctionBidDto {
 
 export interface ActiveLotDetailDto {
   id: string;
+  roundNumber: number;
   sequenceOrder: number;
   totalLots: number;
   setCategory: string;
@@ -214,14 +229,20 @@ export interface ActiveLotDetailDto {
   winningOwnerName: string | null;
   player: {
     id: string;
+    cricsheetId: string | null;
     fullName: string;
-    nationality: string;
+    nationality: string | null;
     isOverseas: boolean;
     age: number | null;
     playingRole: CricketRole;
-    battingStyle: string;
-    bowlingStyle: string;
+    secondaryRole: CricketRole | null;
+    battingStyle: string | null;
+    bowlingStyle: string | null;
+    iplDebutYear: number | null;
+    iplLastYear: number | null;
+    teamHistory: string[];
     imageUrl: string | null;
+    provenanceSource: string | null;
   };
   bids: AuctionBidDto[];
 }
@@ -253,6 +274,8 @@ export interface AuctionStateSnapshotDto {
   roomName: string;
   roomStatus: RoomStatus;
   auctionStage: AuctionStage;
+  currentRound: number;
+  unsoldCount: number;
   version: number;
   hostParticipantId: string | null;
   isPaused: boolean;
@@ -263,5 +286,119 @@ export interface AuctionStateSnapshotDto {
   participants: RoomParticipantDto[];
   upNextLots: RoomPlayerLotDto[];
   recentResults: AuctionResultItemDto[];
+  allBids: AuctionBidDto[];
   serverTimeMs: number;
+}
+
+// -------------------------------------------------------------
+// PHASE 5: PLAYER PROFILES, SEASON STATS & CSV IMPORT CONTRACTS
+// -------------------------------------------------------------
+
+export interface PlayerSeasonStatDto {
+  id: string;
+  season: number;
+  teamCode: string | null;
+  matches: number | null;
+  innings: number | null;
+  battingInnings: number | null;
+  bowlingInnings: number | null;
+  runs: number | null;
+  ballsFaced: number | null;
+  notOuts: number | null;
+  highestScore: number | null;
+  highestScoreText: string | null;
+  battingAverage: number | null;
+  strikeRate: number | null;
+  fifties: number | null;
+  hundreds: number | null;
+  wickets: number | null;
+  ballsBowled: number | null;
+  runsConceded: number | null;
+  bowlingAverage: number | null;
+  economy: number | null;
+  bowlingStrikeRate: number | null;
+  bestBowling: string | null;
+  catches: number | null;
+  stumpings: number | null;
+  provenanceSource: string | null;
+}
+
+export interface PlayerCareerSummaryDto {
+  seasonsPlayed: number;
+  matches: number | null;
+  batting: {
+    innings: number | null;
+    runs: number | null;
+    ballsFaced: number | null;
+    notOuts: number | null;
+    highestScoreText: string | null;
+    average: number | null;
+    strikeRate: number | null;
+    fifties: number | null;
+    hundreds: number | null;
+  };
+  bowling: {
+    innings: number | null;
+    wickets: number | null;
+    ballsBowled: number | null;
+    runsConceded: number | null;
+    average: number | null;
+    economy: number | null;
+    strikeRate: number | null;
+    bestBowling: string | null;
+  };
+  fielding: {
+    catches: number | null;
+    stumpings: number | null;
+  };
+}
+
+export interface PlayerProfileDetailDto extends MasterPlayerCatalogDto {
+  dateOfBirth: string | null;
+  careerSummary: PlayerCareerSummaryDto;
+  seasonStats: PlayerSeasonStatDto[];
+}
+
+export interface CsvImportErrorDto {
+  rowNumber: number;
+  field?: string;
+  message: string;
+}
+
+export interface CsvImportPreviewRowDto {
+  rowNumber: number;
+  action: 'INSERT' | 'UPDATE' | 'DUPLICATE_IN_CSV' | 'ERROR';
+  matchedBy?: 'cricsheetId' | 'cricinfoId' | 'externalKey' | 'fullName' | null;
+  identityLabel: string;
+  season?: number | null;
+  summary: string;
+}
+
+export interface CsvImportReportDto {
+  importMode: 'PLAYERS' | 'SEASONS';
+  sourceName: string;
+  totalRows: number;
+  insertCount: number;
+  updateCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  canCommit: boolean;
+  errors: CsvImportErrorDto[];
+  previewRows: CsvImportPreviewRowDto[];
+}
+
+export interface PlayerImportBatchDto {
+  id: string;
+  sourceName: string;
+  fileName: string | null;
+  importMode: string;
+  status: string;
+  totalRows: number;
+  insertedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  errorCount: number;
+  provenanceNotes: string | null;
+  createdAt: string;
+  rolledBackAt: string | null;
 }

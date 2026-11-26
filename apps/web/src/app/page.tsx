@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -154,6 +155,11 @@ export default function AuctionCrazeHomePage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <Link href="/players">
+              <Button variant="surface" size="sm" data-testid="nav-player-catalog-btn">
+                Player Archive
+              </Button>
+            </Link>
             {session ? (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-stadium-card border border-gold-500/35 text-xs">
                 <span className="w-2 h-2 rounded-full bg-signal-sold animate-pulse" />

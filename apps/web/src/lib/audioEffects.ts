@@ -98,3 +98,25 @@ export function playUnsoldTone(isMuted: boolean, volume = 0.6): void {
     // Ignore autoplay restriction
   }
 }
+
+export function playCountdownTick(isMuted: boolean, volume = 0.5): void {
+  if (isMuted || volume <= 0) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1040, now);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.14 * volume, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.065);
+  } catch {
+    // Ignore autoplay restriction
+  }
+}

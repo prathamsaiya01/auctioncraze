@@ -220,8 +220,9 @@ export function mapRoomToDetailDto(room: any, includeInviteToken = false): RoomD
     lots: (room.lots || []).map((l: any) => ({
       id: l.id,
       playerId: l.playerId,
+      roundNumber: l.roundNumber ?? 1,
       fullName: l.player?.fullName || 'Unknown Player',
-      nationality: l.player?.nationality || 'India',
+      nationality: l.player?.nationality ?? null,
       isOverseas: !!l.player?.isOverseas,
       playingRole: (l.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
       sequenceOrder: l.sequenceOrder,

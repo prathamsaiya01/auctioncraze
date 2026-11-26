@@ -20,5 +20,6 @@ router.post('/sold', authenticateGuest, AuctionController.markSold);
 router.post('/unsold', authenticateGuest, AuctionController.markUnsold);
 router.post('/next', authenticateGuest, AuctionController.nextPlayer);
 router.post('/skip', authenticateGuest, AuctionController.skipPlayer);
+router.post('/requeue-unsold', authenticateGuest, AuctionController.requeueUnsold);
 
 export default router;

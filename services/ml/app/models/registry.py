@@ -50,6 +50,14 @@ class ModelRegistry:
                 test_split="pending-chronological-holdout",
                 is_trained=False,
             ),
+            MLModelKey.POST_MATCH_ANALYSIS: ModelVersionMetadata(
+                model_key=MLModelKey.POST_MATCH_ANALYSIS,
+                version="0.0.0-untrained",
+                algorithm="Win-Probability Attribution + Phase Impact",
+                train_split="pending-historical-ipl-data",
+                test_split="pending-chronological-holdout",
+                is_trained=False,
+            ),
         }
 
     def list_models(self) -> Dict[MLModelKey, ModelVersionMetadata]:

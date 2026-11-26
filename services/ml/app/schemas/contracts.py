@@ -9,6 +9,14 @@ class MLModelKey(str, Enum):
     TEAM_STRENGTH = "TEAM_STRENGTH"
     PLAYING_XI = "PLAYING_XI"
     MATCH_PRED = "MATCH_PRED"
+    POST_MATCH_ANALYSIS = "POST_MATCH_ANALYSIS"
+
+
+class GuardrailPolicy:
+    """Hard product policy: ML never provides auction bidding or buying advice."""
+    ALLOW_BIDDING_ADVICE = False
+    ALLOW_PURCHASE_PRICING_ADVICE = False
+    REQUIRE_VERIFIED_TRAINING_DATA = True
 
 
 class ModelVersionMetadata(BaseModel):
@@ -94,3 +102,47 @@ class MatchPredictionResponse(BaseModel):
     away_win_probability: float
     calibrated: bool
     key_factors: List[str]
+
+
+class PostMatchAnalysisRequest(BaseModel):
+    match_id: str
+    home_franchise_code: str
+    away_franchise_code: str
+    winner_franchise_code: str
+    innings_scores: Dict[str, int]
+
+
+class PostMatchAnalysisResponse(BaseModel):
+    match_id: str
+    model_version: str
+    turning_points: List[str]
+    top_impact_players: List[str]
+    phase_breakdown: Dict[str, Dict[str, float]]
+
+
+class PlayerFeatureVector(BaseModel):
+    cricsheet_id: str
+    full_name: str
+    nationality: Optional[str] = None
+    playing_role: str
+    seasons_played: int
+    total_matches: int
+    career_runs: Optional[int] = None
+    career_batting_average: Optional[float] = None
+    career_strike_rate: Optional[float] = None
+    career_wickets: Optional[int] = None
+    career_bowling_economy: Optional[float] = None
+    recent_3_season_runs: Optional[int] = None
+    recent_3_season_wickets: Optional[int] = None
+    provenance_source: str
+
+
+class DatasetProvenanceResponse(BaseModel):
+    total_players: int
+    total_player_seasons: int
+    seasons_covered: List[int]
+    with_verified_nationality: int
+    with_verified_photo_url: int
+    with_verified_dob: int
+    sources: List[Dict[str, object]]
+    bidding_advice_enabled: bool = False

@@ -2,6 +2,7 @@ import { LotStatus as DbLotStatus, Prisma, RoomStatus as DbRoomStatus } from '@a
 import { calculateNextBidLakhs } from '@auctioncraze/auction-engine';
 import {
   ActiveLotDetailDto,
+  AuctionBidDto,
   AuctionFranchiseStateDto,
   AuctionResultItemDto,
   AuctionStage,
@@ -33,8 +34,7 @@ export const AUCTION_ROOM_INCLUDE = {
     include: {
       player: true,
       bids: {
-        orderBy: { sequenceNumber: 'desc' },
-        take: 30
+        orderBy: { sequenceNumber: 'desc' }
       }
     },
     orderBy: { sequenceOrder: 'asc' }
@@ -86,6 +86,7 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
 
     currentLot = {
       id: currentLotRaw.id,
+      roundNumber: currentLotRaw.roundNumber ?? 1,
       sequenceOrder: currentLotRaw.sequenceOrder,
       totalLots: lots.length,
       setCategory: currentLotRaw.setCategory,
@@ -101,14 +102,22 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
       winningOwnerName: winningOwner?.displayName || null,
       player: {
         id: currentLotRaw.player.id,
+        cricsheetId: currentLotRaw.player.cricsheetId || null,
         fullName: currentLotRaw.player.fullName,
-        nationality: currentLotRaw.player.nationality,
+        nationality: currentLotRaw.player.nationality ?? null,
         isOverseas: !!currentLotRaw.player.isOverseas,
         age: currentLotRaw.player.age,
         playingRole: currentLotRaw.player.playingRole as CricketRole,
-        battingStyle: currentLotRaw.player.battingStyle,
-        bowlingStyle: currentLotRaw.player.bowlingStyle,
-        imageUrl: currentLotRaw.player.imageUrl
+        secondaryRole: (currentLotRaw.player.secondaryRole as CricketRole) || null,
+        battingStyle: currentLotRaw.player.battingStyle ?? null,
+        bowlingStyle: currentLotRaw.player.bowlingStyle ?? null,
+        iplDebutYear: currentLotRaw.player.iplDebutYear ?? null,
+        iplLastYear: currentLotRaw.player.iplLastYear ?? null,
+        teamHistory: Array.isArray(currentLotRaw.player.teamHistoryJson)
+          ? currentLotRaw.player.teamHistoryJson
+          : [],
+        imageUrl: currentLotRaw.player.imageUrl || null,
+        provenanceSource: currentLotRaw.player.provenanceSource || null
       },
       bids: (currentLotRaw.bids || []).map((b: any) => {
         const fran = franchiseById.get(b.franchiseId);
@@ -116,6 +125,8 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
         return {
           id: b.id,
           lotId: b.lotId,
+          playerName: currentLotRaw.player.fullName,
+          roundNumber: b.roundNumber ?? currentLotRaw.roundNumber ?? 1,
           franchiseId: b.franchiseId,
           franchiseCode: fran?.presetCode || '',
           franchiseColor: fran?.primaryColor || '#38BDF8',
@@ -166,7 +177,7 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
     const retainedSquad: SquadMemberDto[] = (f.retentions || []).map((r: any) => ({
       playerId: r.playerId,
       fullName: r.player?.fullName || 'Unknown',
-      nationality: r.player?.nationality || 'India',
+      nationality: r.player?.nationality ?? null,
       isOverseas: !!r.player?.isOverseas,
       playingRole: (r.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
       priceLakhs: r.retentionCostLakhs,
@@ -175,7 +186,7 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
     const boughtSquad: SquadMemberDto[] = (f.purchases || []).map((pur: any) => ({
       playerId: pur.playerId,
       fullName: pur.player?.fullName || 'Unknown',
-      nationality: pur.player?.nationality || 'India',
+      nationality: pur.player?.nationality ?? null,
       isOverseas: !!pur.player?.isOverseas,
       playingRole: (pur.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
       priceLakhs: pur.purchasePriceLakhs,
@@ -203,12 +214,13 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
 
   const upNextLots = lots
     .filter((l: any) => l.status === DbLotStatus.QUEUED)
-    .slice(0, 6)
+    .slice(0, 12)
     .map((l: any) => ({
       id: l.id,
       playerId: l.playerId,
+      roundNumber: l.roundNumber ?? 1,
       fullName: l.player?.fullName || 'Unknown',
-      nationality: l.player?.nationality || 'India',
+      nationality: l.player?.nationality ?? null,
       isOverseas: !!l.player?.isOverseas,
       playingRole: (l.player?.playingRole || CricketRole.ALL_ROUNDER) as CricketRole,
       sequenceOrder: l.sequenceOrder,
@@ -229,7 +241,6 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
       const tb = b.settledAt ? new Date(b.settledAt).getTime() : 0;
       return tb - ta;
     })
-    .slice(0, 12)
     .map((l: any) => {
       const winFran = l.winningFranchiseId ? franchiseById.get(l.winningFranchiseId) : null;
       return {
@@ -246,12 +257,44 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
       };
     });
 
+  const allBids: AuctionBidDto[] = lots
+    .flatMap((l: any) =>
+      (l.bids || []).map((b: any) => {
+        const fran = franchiseById.get(b.franchiseId);
+        const bidder = participantById.get(b.participantId);
+        return {
+          id: b.id,
+          lotId: b.lotId,
+          playerName: l.player?.fullName || 'Unknown',
+          roundNumber: b.roundNumber ?? l.roundNumber ?? 1,
+          franchiseId: b.franchiseId,
+          franchiseCode: fran?.presetCode || '',
+          franchiseColor: fran?.primaryColor || '#38BDF8',
+          participantId: b.participantId,
+          bidderDisplayName: bidder?.displayName || 'Owner',
+          bidAmountLakhs: b.bidAmountLakhs,
+          sequenceNumber: b.sequenceNumber,
+          createdAt: b.createdAt.toISOString()
+        };
+      })
+    )
+    .sort((a: AuctionBidDto, b: AuctionBidDto) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 250);
+
+  const unsoldCount = lots.filter((l: any) => l.status === DbLotStatus.UNSOLD).length;
+  const currentRound = lots.reduce(
+    (maxR: number, l: any) => Math.max(maxR, l.roundNumber ?? 1),
+    1
+  );
+
   return {
     roomId: room.id,
     roomCode: room.code,
     roomName: room.name,
     roomStatus: room.status as RoomStatus,
     auctionStage,
+    currentRound,
+    unsoldCount,
     version: room.version,
     hostParticipantId: room.hostParticipantId,
     isPaused: !!room.isPaused,
@@ -297,6 +340,7 @@ export function mapAuctionStateSnapshot(room: any, nowMs = Date.now()): AuctionS
     })),
     upNextLots,
     recentResults,
+    allBids,
     serverTimeMs: nowMs
   };
 }

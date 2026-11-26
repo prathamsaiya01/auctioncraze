@@ -5,3 +5,13 @@ export function formatLakhs(lakhs: number): string {
   }
   return `₹${lakhs} L`;
 }
+
+export function formatCricketStyle(raw: string | null | undefined): string {
+  if (!raw) return 'Unknown';
+  if (raw === 'NONE') return 'None';
+  return raw
+    .toLowerCase()
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}

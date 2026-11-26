@@ -241,3 +241,15 @@ export const resolveLotSchema = z.object({
 export const extendTimerSchema = z.object({
   extraSeconds: z.number().int().min(3).max(60).default(10)
 });
+
+export const requeueUnsoldSchema = z.object({
+  lotIds: z.array(z.string().uuid('Invalid lot ID')).max(500).optional()
+});
+
+export const csvImportSchema = z.object({
+  importMode: z.enum(['PLAYERS', 'SEASONS']),
+  csvText: z.string().min(10, 'CSV content cannot be empty').max(5_000_000, 'CSV exceeds 5MB limit'),
+  sourceName: z.string().trim().min(2).max(120).default('csv_upload'),
+  fileName: z.string().trim().max(180).optional(),
+  provenanceNotes: z.string().trim().max(500).optional()
+});

@@ -19,8 +19,8 @@ import {
   SOCKET_EVENTS
 } from '@auctioncraze/shared';
 import { api } from '@/lib/api';
-import { formatLakhs } from '@/lib/formatPrice';
-import { playBidChime, playSoldGavel, playUnsoldTone } from '@/lib/audioEffects';
+import { formatCricketStyle, formatLakhs } from '@/lib/formatPrice';
+import { playBidChime, playCountdownTick, playSoldGavel, playUnsoldTone } from '@/lib/audioEffects';
 import { getRoomSocket } from '@/lib/socket';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Badge } from '@/components/ui/Badge';
@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { FranchiseEmblem } from '@/components/ui/FranchiseEmblem';
 import { Modal } from '@/components/ui/Modal';
+import { PlayerProfileModal } from '@/components/players/PlayerProfileModal';
 import {
   ArrowLeft,
   Award,
@@ -39,15 +40,18 @@ import {
   Gavel,
   Globe,
   Hammer,
+  History,
   Maximize2,
   Minimize2,
   Pause,
   Play,
   Plus,
   Radio,
+  RotateCcw,
   ShieldCheck,
   SkipForward,
   Sparkles,
+  UserCheck,
   Users,
   Volume2,
   VolumeX,
@@ -155,7 +159,11 @@ export default function LiveAuctionPage() {
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [settlementOverlay, setSettlementOverlay] = useState<SettlementOverlayState | null>(null);
   const [inspectedFranchiseId, setInspectedFranchiseId] = useState<string | null>(null);
+  const [inspectedPlayerId, setInspectedPlayerId] = useState<string | null>(null);
   const [imageFailedLotId, setImageFailedLotId] = useState<string | null>(null);
+  const [sideTab, setSideTab] = useState<'QUEUE' | 'BIDS' | 'RESULTS' | 'FEED'>('QUEUE');
+  const [resultsFilter, setResultsFilter] = useState<'ALL' | 'SOLD' | 'UNSOLD'>('ALL');
+  const [resultsSearch, setResultsSearch] = useState('');
 
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(0.65);
@@ -163,6 +171,7 @@ export default function LiveAuctionPage() {
 
   // Server-authoritative timer offset (`serverTimeMs - Date.now()`) & ticking seconds
   const clockOffsetRef = useRef<number>(0);
+  const lastTickSecRef = useRef<number | null>(null);
   const [liveRemainingSeconds, setLiveRemainingSeconds] = useState<number>(0);
 
   const pushFeed = useCallback((text: string, tone: FeedEvent['tone'] = 'electric') => {
@@ -251,6 +260,13 @@ export default function LiveAuctionPage() {
         const estimatedServerNow = Date.now() + clockOffsetRef.current;
         const diffSec = Math.max(0, (auction.timer.deadlineMs - estimatedServerNow) / 1000);
         setLiveRemainingSeconds(diffSec);
+        const ceilSec = Math.ceil(diffSec);
+        if (ceilSec >= 1 && ceilSec <= 3 && lastTickSecRef.current !== ceilSec) {
+          lastTickSecRef.current = ceilSec;
+          playCountdownTick(isMuted, volume);
+        } else if (ceilSec > 3 || ceilSec <= 0) {
+          lastTickSecRef.current = null;
+        }
       } else {
         setLiveRemainingSeconds(auction.timer.remainingSeconds);
       }
@@ -259,7 +275,7 @@ export default function LiveAuctionPage() {
     compute();
     const interval = setInterval(compute, 100);
     return () => clearInterval(interval);
-  }, [auction]);
+  }, [auction, isMuted, volume]);
 
   // Real-time incremental Socket.IO listener setup
   useEffect(() => {
@@ -342,9 +358,13 @@ export default function LiveAuctionPage() {
         const nextBids = alreadyPresent
           ? prev.currentLot.bids
           : [bid, ...prev.currentLot.bids];
+        const nextAllBids = prev.allBids.some((b) => b.id === bid.id)
+          ? prev.allBids
+          : [bid, ...prev.allBids].slice(0, 250);
 
         return {
           ...prev,
+          allBids: nextAllBids,
           currentLot: {
             ...prev.currentLot,
             currentBidLakhs: bid.bidAmountLakhs,
@@ -450,7 +470,7 @@ export default function LiveAuctionPage() {
             prev.currentLot && prev.currentLot.id === evt.lotId
               ? { ...prev.currentLot, status: LotStatus.SOLD }
               : prev.currentLot,
-          recentResults: [resultItem, ...deduped.slice(0, 14)]
+          recentResults: [resultItem, ...deduped]
         };
       });
 
@@ -487,12 +507,15 @@ export default function LiveAuctionPage() {
         return {
           ...prev,
           auctionStage: 'PLAYER_UNSOLD',
+          unsoldCount: prev.recentResults.some((r) => r.lotId === evt.lotId && r.status === LotStatus.UNSOLD)
+            ? prev.unsoldCount
+            : prev.unsoldCount + 1,
           timer: { ...prev.timer, deadlineMs: null, remainingSeconds: 0 },
           currentLot:
             prev.currentLot && prev.currentLot.id === evt.lotId
               ? { ...prev.currentLot, status: LotStatus.UNSOLD }
               : prev.currentLot,
-          recentResults: [resultItem, ...deduped.slice(0, 14)]
+          recentResults: [resultItem, ...deduped]
         };
       });
 
@@ -548,6 +571,20 @@ export default function LiveAuctionPage() {
       pushFeed('Auction complete! Final squads locked.', 'sold');
     };
 
+    const onLotRoundReentered = (evt: any) => {
+      setSettlementOverlay(null);
+      if (evt?.snapshot) {
+        syncClock(evt.snapshot.serverTimeMs);
+        setAuction(evt.snapshot);
+      } else {
+        fetchAuctionSnapshot();
+      }
+      pushFeed(
+        `Accelerated Round ${evt?.roundNumber || ''}: ${evt?.requeuedCount || 0} unsold player(s) re-entered!`,
+        'gold'
+      );
+    };
+
     const onParticipantEvent = () => {
       fetchAuctionSnapshot();
     };
@@ -567,6 +604,7 @@ export default function LiveAuctionPage() {
     socket.on(SOCKET_EVENTS.PLAYER_UNSOLD, onPlayerUnsold);
     socket.on(SOCKET_EVENTS.PURSE_UPDATED, onPurseUpdated);
     socket.on(SOCKET_EVENTS.SQUAD_UPDATED, onSquadUpdated);
+    socket.on(SOCKET_EVENTS.LOT_ROUND_REENTERED, onLotRoundReentered);
     socket.on(SOCKET_EVENTS.AUCTION_COMPLETED, onAuctionCompleted);
     socket.on(SOCKET_EVENTS.HOST_CHANGED, onParticipantEvent);
     socket.on(SOCKET_EVENTS.PARTICIPANT_JOINED, onParticipantEvent);
@@ -592,6 +630,7 @@ export default function LiveAuctionPage() {
       socket.off(SOCKET_EVENTS.PLAYER_UNSOLD, onPlayerUnsold);
       socket.off(SOCKET_EVENTS.PURSE_UPDATED, onPurseUpdated);
       socket.off(SOCKET_EVENTS.SQUAD_UPDATED, onSquadUpdated);
+      socket.off(SOCKET_EVENTS.LOT_ROUND_REENTERED, onLotRoundReentered);
       socket.off(SOCKET_EVENTS.AUCTION_COMPLETED, onAuctionCompleted);
       socket.off(SOCKET_EVENTS.HOST_CHANGED, onParticipantEvent);
       socket.off(SOCKET_EVENTS.PARTICIPANT_JOINED, onParticipantEvent);
@@ -867,7 +906,18 @@ export default function LiveAuctionPage() {
               <p className="text-sm text-stadium-muted max-w-xl mx-auto">
                 Every lot in the auction pool has been settled. Inspect every franchise&apos;s final squad and remaining purse below.
               </p>
-              <div className="pt-2">
+              <div className="pt-2 flex flex-wrap justify-center gap-3">
+                {isHost && auction.unsoldCount > 0 && (
+                  <Button
+                    variant="gold"
+                    isLoading={isHostActing}
+                    onClick={() => handleHostAction('requeue-unsold', {})}
+                    leftIcon={<RotateCcw className="w-4 h-4" />}
+                    data-testid="completed-requeue-unsold-btn"
+                  >
+                    Re-Enter {auction.unsoldCount} Unsold Player{auction.unsoldCount === 1 ? '' : 's'} (Round {auction.currentRound + 1})
+                  </Button>
+                )}
                 <Link href={`/room/${auction.roomCode}`}>
                   <Button variant="surface">Back to Room Overview</Button>
                 </Link>
@@ -1097,8 +1147,13 @@ export default function LiveAuctionPage() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge tone="gold" data-testid="lot-number-badge">
-                          LOT #{currentLot.sequenceOrder} OF {currentLot.totalLots}
+                          {currentLot.sequenceOrder <= currentLot.totalLots
+                            ? `LOT #${currentLot.sequenceOrder} OF ${currentLot.totalLots}`
+                            : `LOT #${currentLot.sequenceOrder}`}
                         </Badge>
+                        {currentLot.roundNumber > 1 && (
+                          <Badge tone="electric">ROUND {currentLot.roundNumber} · RE-ENTRY</Badge>
+                        )}
                         <Badge tone="neutral">{currentLot.setCategory}</Badge>
                         <Badge tone={currentLot.player.isOverseas ? 'electric' : 'sold'}>
                           <Globe className="w-3 h-3" />
@@ -1192,38 +1247,74 @@ export default function LiveAuctionPage() {
 
                     {/* Player Identity + Attributes */}
                     <div className="flex-1 min-w-0 space-y-4 w-full text-center sm:text-left">
-                      <div>
-                        <p className="text-xs uppercase tracking-widest text-gold-400 font-bold">
-                          {ROLE_LABEL[currentLot.player.playingRole]} • {currentLot.player.nationality}
-                        </p>
-                        <h2
-                          data-testid="spotlight-player-name"
-                          className="font-display text-3xl sm:text-4xl font-extrabold text-white tracking-wide leading-tight mt-0.5"
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs uppercase tracking-widest text-gold-400 font-bold">
+                            {ROLE_LABEL[currentLot.player.playingRole]}
+                            {currentLot.player.secondaryRole ? ` / ${ROLE_LABEL[currentLot.player.secondaryRole]}` : ''}
+                            {' • '}
+                            {currentLot.player.nationality || 'Nationality Unknown'}
+                          </p>
+                          <h2
+                            data-testid="spotlight-player-name"
+                            className="font-display text-3xl sm:text-4xl font-extrabold text-white tracking-wide leading-tight mt-0.5"
+                          >
+                            {currentLot.player.fullName}
+                          </h2>
+                        </div>
+                        <Button
+                          variant="surface"
+                          size="sm"
+                          onClick={() => setInspectedPlayerId(currentLot.player.id)}
+                          leftIcon={<UserCheck className="w-3.5 h-3.5 text-gold-300" />}
+                          data-testid="view-player-profile-btn"
                         >
-                          {currentLot.player.fullName}
-                        </h2>
+                          Career Stats
+                        </Button>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-left">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-left">
                         <div className="rounded-xl border border-stadium-border bg-stadium-card/70 px-3 py-2">
                           <p className="text-[10px] uppercase tracking-wider text-stadium-muted">Batting</p>
                           <p className="text-xs font-semibold text-white truncate">
-                            {currentLot.player.battingStyle}
+                            {formatCricketStyle(currentLot.player.battingStyle)}
                           </p>
                         </div>
                         <div className="rounded-xl border border-stadium-border bg-stadium-card/70 px-3 py-2">
                           <p className="text-[10px] uppercase tracking-wider text-stadium-muted">Bowling</p>
                           <p className="text-xs font-semibold text-white truncate">
-                            {currentLot.player.bowlingStyle}
+                            {formatCricketStyle(currentLot.player.bowlingStyle)}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-stadium-border bg-stadium-card/70 px-3 py-2 col-span-2 sm:col-span-1">
+                        <div className="rounded-xl border border-stadium-border bg-stadium-card/70 px-3 py-2">
+                          <p className="text-[10px] uppercase tracking-wider text-stadium-muted">IPL Span</p>
+                          <p className="font-mono text-xs font-semibold text-white truncate">
+                            {currentLot.player.iplDebutYear
+                              ? `${currentLot.player.iplDebutYear}–${currentLot.player.iplLastYear || currentLot.player.iplDebutYear}`
+                              : '—'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-stadium-border bg-stadium-card/70 px-3 py-2">
                           <p className="text-[10px] uppercase tracking-wider text-stadium-muted">Base Price</p>
                           <p className="font-mono text-xs font-bold text-gold-300">
                             {formatLakhs(currentLot.basePriceLakhs)}
                           </p>
                         </div>
                       </div>
+
+                      {currentLot.player.teamHistory && currentLot.player.teamHistory.length > 0 && (
+                        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 text-[10px] font-mono">
+                          <span className="text-stadium-muted uppercase">Franchise History:</span>
+                          {currentLot.player.teamHistory.map((code) => (
+                            <span
+                              key={code}
+                              className="px-2 py-0.5 rounded bg-stadium-card border border-stadium-border text-white"
+                            >
+                              {code}
+                            </span>
+                          ))}
+                        </div>
+                      )}
 
                       {/* Current High Bid Box */}
                       <div className="rounded-2xl border border-gold-500/35 bg-gradient-to-r from-stadium-card via-stadium-card to-gold-500/10 p-4 flex flex-wrap items-center justify-between gap-4">
@@ -1493,124 +1584,256 @@ export default function LiveAuctionPage() {
                     >
                       Skip Lot
                     </Button>
+
+                    {auction.unsoldCount > 0 && (
+                      <Button
+                        variant="surface"
+                        size="sm"
+                        isLoading={isHostActing}
+                        disabled={
+                          auction.auctionStage === 'LIVE' ||
+                          auction.auctionStage === 'BIDDING_CLOSED' ||
+                          auction.auctionStage === 'PAUSED'
+                        }
+                        onClick={() => handleHostAction('requeue-unsold', {})}
+                        leftIcon={<RotateCcw className="w-4 h-4 text-gold-400" />}
+                        data-testid="host-requeue-unsold-btn"
+                      >
+                        Re-Enter Unsold ({auction.unsoldCount})
+                      </Button>
+                    )}
                   </div>
                 </Card>
               )}
             </section>
 
-            {/* RIGHT COLUMN: Up Next + Recent Results + Live Activity Feed */}
+            {/* RIGHT COLUMN: Tabbed Queue / Full Bid History / Filterable Results / Live Activity Feed */}
             <aside className="xl:col-span-3 space-y-4 order-3">
-              {/* Up Next */}
               <Card className="p-4 space-y-3">
-                <div className="flex items-center justify-between border-b border-stadium-border pb-2">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-electric-400" />
-                    <h2 className="font-display text-lg font-bold text-white tracking-wide">
-                      UP NEXT
-                    </h2>
-                  </div>
-                  <span className="text-[11px] font-mono text-stadium-muted">
-                    {auction.upNextLots.length} queued
-                  </span>
+                <div className="grid grid-cols-4 gap-1 rounded-xl bg-stadium-bg p-1 border border-stadium-border">
+                  {(
+                    [
+                      { key: 'QUEUE', label: 'Queue' },
+                      { key: 'BIDS', label: 'Bids' },
+                      { key: 'RESULTS', label: 'Results' },
+                      { key: 'FEED', label: 'Feed' }
+                    ] as const
+                  ).map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => setSideTab(t.key)}
+                      data-testid={`side-tab-${t.key.toLowerCase()}`}
+                      className={`py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                        sideTab === t.key
+                          ? 'bg-gold-500 text-stadium-canvas shadow'
+                          : 'text-stadium-muted hover:text-white'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
 
-                {auction.upNextLots.length === 0 ? (
-                  <p className="text-xs text-stadium-muted py-2">Final lot on stage.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {auction.upNextLots.slice(0, 5).map((lot) => (
-                      <div
-                        key={lot.id}
-                        className="rounded-xl border border-stadium-border bg-stadium-card/65 px-3 py-2 flex items-center justify-between gap-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-white truncate">
-                            #{lot.sequenceOrder} {lot.fullName}
-                          </p>
-                          <p className="text-[10px] text-stadium-muted">
-                            {ROLE_LABEL[lot.playingRole]} • {lot.setCategory}
-                          </p>
-                        </div>
-                        <span className="font-mono text-[11px] font-bold text-gold-300 shrink-0">
-                          {formatLakhs(lot.basePriceLakhs)}
-                        </span>
+                {sideTab === 'QUEUE' && (
+                  <div className="space-y-3" data-testid="side-panel-queue">
+                    <div className="flex items-center justify-between border-b border-stadium-border pb-2">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-electric-400" />
+                        <h2 className="font-display text-lg font-bold text-white tracking-wide">
+                          UP NEXT
+                        </h2>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
+                      <span className="text-[11px] font-mono text-stadium-muted">
+                        Round {auction.currentRound} • {auction.upNextLots.length} queued
+                      </span>
+                    </div>
 
-              {/* Recent Hammer Results */}
-              <Card className="p-4 space-y-3">
-                <div className="flex items-center gap-2 border-b border-stadium-border pb-2">
-                  <Sparkles className="w-4 h-4 text-gold-400" />
-                  <h2 className="font-display text-lg font-bold text-white tracking-wide">
-                    RECENT VERDICTS
-                  </h2>
-                </div>
-                {auction.recentResults.length === 0 ? (
-                  <p className="text-xs text-stadium-muted py-2">No settled players yet.</p>
-                ) : (
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {auction.recentResults.slice(0, 8).map((res) => (
-                      <div
-                        key={res.lotId}
-                        className="rounded-xl border border-stadium-border bg-stadium-card/65 px-3 py-2 flex items-center justify-between gap-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-white truncate">{res.playerName}</p>
-                          <p className="text-[10px] text-stadium-muted">
-                            {res.status === LotStatus.SOLD
-                              ? `${res.franchiseCode} • ${formatLakhs(res.soldPriceLakhs || 0)}`
-                              : 'Passed Unsold'}
-                          </p>
-                        </div>
-                        <Badge tone={res.status === LotStatus.SOLD ? 'sold' : 'unsold'}>
-                          {res.status}
-                        </Badge>
+                    {auction.upNextLots.length === 0 ? (
+                      <p className="text-xs text-stadium-muted py-4 text-center">No further lots queued right now.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
+                        {auction.upNextLots.map((lot) => (
+                          <button
+                            key={lot.id}
+                            type="button"
+                            onClick={() => setInspectedPlayerId(lot.playerId)}
+                            className="w-full text-left rounded-xl border border-stadium-border bg-stadium-card/65 hover:border-gold-500/40 px-3 py-2 flex items-center justify-between gap-2 transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-white truncate">
+                                #{lot.sequenceOrder} {lot.fullName}
+                              </p>
+                              <p className="text-[10px] text-stadium-muted">
+                                {ROLE_LABEL[lot.playingRole]} • {lot.setCategory}
+                                {lot.roundNumber > 1 ? ` • R${lot.roundNumber}` : ''}
+                              </p>
+                            </div>
+                            <span className="font-mono text-[11px] font-bold text-gold-300 shrink-0">
+                              {formatLakhs(lot.basePriceLakhs)}
+                            </span>
+                          </button>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
-              </Card>
 
-              {/* Live Broadcast Ticker */}
-              <Card className="p-4 space-y-3">
-                <div className="flex items-center gap-2 border-b border-stadium-border pb-2">
-                  <Users className="w-4 h-4 text-electric-400" />
-                  <h2 className="font-display text-lg font-bold text-white tracking-wide">
-                    AUCTION FEED
-                  </h2>
-                </div>
-                <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                  {feed.length === 0 ? (
-                    <p className="text-xs text-stadium-muted py-1">Connected to live floor updates.</p>
-                  ) : (
-                    feed.map((item) => (
-                      <div
-                        key={item.id}
-                        className="text-[11px] leading-snug rounded-lg bg-stadium-card/50 border border-stadium-border/70 px-2.5 py-1.5 flex items-start justify-between gap-2"
-                      >
-                        <span
-                          className={
-                            item.tone === 'sold'
-                              ? 'text-signal-sold'
-                              : item.tone === 'unsold'
-                              ? 'text-signal-unsold'
-                              : item.tone === 'gold'
-                              ? 'text-gold-300'
-                              : 'text-white'
-                          }
-                        >
-                          {item.text}
-                        </span>
-                        <span className="font-mono text-[10px] text-stadium-muted shrink-0">
-                          {item.timestamp}
-                        </span>
+                {sideTab === 'BIDS' && (
+                  <div className="space-y-3" data-testid="side-panel-bids">
+                    <div className="flex items-center justify-between border-b border-stadium-border pb-2">
+                      <div className="flex items-center gap-2">
+                        <History className="w-4 h-4 text-gold-400" />
+                        <h2 className="font-display text-lg font-bold text-white tracking-wide">
+                          COMPLETE BID HISTORY
+                        </h2>
                       </div>
-                    ))
-                  )}
-                </div>
+                      <span className="text-[11px] font-mono text-stadium-muted">
+                        {auction.allBids.length} bids
+                      </span>
+                    </div>
+
+                    {auction.allBids.length === 0 ? (
+                      <p className="text-xs text-stadium-muted py-4 text-center">No bids placed yet in this room.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
+                        {auction.allBids.map((b) => (
+                          <div
+                            key={b.id}
+                            className="rounded-xl border border-stadium-border bg-stadium-card/65 px-3 py-2 flex items-center justify-between gap-2 text-xs"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-semibold text-white truncate">
+                                {b.playerName || 'Player Lot'}
+                              </p>
+                              <p className="text-[10px] text-stadium-muted">
+                                <strong style={{ color: b.franchiseColor || '#D4AF37' }}>
+                                  {b.franchiseCode}
+                                </strong>{' '}
+                                • {b.bidderDisplayName} • R{b.roundNumber || 1} #{b.sequenceNumber}
+                              </p>
+                            </div>
+                            <span className="font-mono font-bold text-gold-300 shrink-0">
+                              {formatLakhs(b.bidAmountLakhs)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {sideTab === 'RESULTS' && (
+                  <div className="space-y-3" data-testid="side-panel-results">
+                    <div className="flex items-center justify-between border-b border-stadium-border pb-2">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-gold-400" />
+                        <h2 className="font-display text-lg font-bold text-white tracking-wide">
+                          AUCTION RESULTS
+                        </h2>
+                      </div>
+                      <span className="text-[11px] font-mono text-stadium-muted">
+                        {auction.recentResults.length} settled
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={resultsSearch}
+                        onChange={(e) => setResultsSearch(e.target.value)}
+                        placeholder="Search player name..."
+                        className="w-full rounded-lg bg-stadium-bg border border-stadium-border px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-gold-400"
+                      />
+                      <div className="flex gap-1.5">
+                        {(['ALL', 'SOLD', 'UNSOLD'] as const).map((f) => (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => setResultsFilter(f)}
+                            className={`flex-1 py-1 rounded-lg text-[10px] font-bold uppercase border ${
+                              resultsFilter === f
+                                ? 'bg-gold-500/20 border-gold-400 text-gold-300'
+                                : 'bg-stadium-card border-stadium-border text-stadium-muted'
+                            }`}
+                          >
+                            {f}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 max-h-[430px] overflow-y-auto pr-1">
+                      {auction.recentResults
+                        .filter((r) => resultsFilter === 'ALL' || r.status === resultsFilter)
+                        .filter((r) =>
+                          !resultsSearch.trim()
+                            ? true
+                            : r.playerName.toLowerCase().includes(resultsSearch.trim().toLowerCase())
+                        )
+                        .map((res) => (
+                          <button
+                            key={res.lotId}
+                            type="button"
+                            onClick={() => setInspectedPlayerId(res.playerId)}
+                            className="w-full text-left rounded-xl border border-stadium-border bg-stadium-card/65 hover:border-gold-500/40 px-3 py-2 flex items-center justify-between gap-2 transition-colors"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-white truncate">{res.playerName}</p>
+                              <p className="text-[10px] text-stadium-muted">
+                                {res.status === LotStatus.SOLD
+                                  ? `${res.franchiseCode} • ${formatLakhs(res.soldPriceLakhs || 0)}`
+                                  : 'Passed Unsold'}
+                              </p>
+                            </div>
+                            <Badge tone={res.status === LotStatus.SOLD ? 'sold' : 'unsold'}>
+                              {res.status}
+                            </Badge>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {sideTab === 'FEED' && (
+                  <div className="space-y-3" data-testid="side-panel-feed">
+                    <div className="flex items-center gap-2 border-b border-stadium-border pb-2">
+                      <Users className="w-4 h-4 text-electric-400" />
+                      <h2 className="font-display text-lg font-bold text-white tracking-wide">
+                        AUCTION FEED
+                      </h2>
+                    </div>
+                    <div className="space-y-1.5 max-h-[520px] overflow-y-auto pr-1">
+                      {feed.length === 0 ? (
+                        <p className="text-xs text-stadium-muted py-1">Connected to live floor updates.</p>
+                      ) : (
+                        feed.map((item) => (
+                          <div
+                            key={item.id}
+                            className="text-[11px] leading-snug rounded-lg bg-stadium-card/50 border border-stadium-border/70 px-2.5 py-1.5 flex items-start justify-between gap-2"
+                          >
+                            <span
+                              className={
+                                item.tone === 'sold'
+                                  ? 'text-signal-sold'
+                                  : item.tone === 'unsold'
+                                  ? 'text-signal-unsold'
+                                  : item.tone === 'gold'
+                                  ? 'text-gold-300'
+                                  : 'text-white'
+                              }
+                            >
+                              {item.text}
+                            </span>
+                            <span className="font-mono text-[10px] text-stadium-muted shrink-0">
+                              {item.timestamp}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </Card>
             </aside>
           </div>
@@ -1636,9 +1859,11 @@ export default function LiveAuctionPage() {
               </p>
             ) : (
               inspectedFranchise.squad.map((member) => (
-                <div
+                <button
                   key={`${member.playerId}-${member.acquisitionType}`}
-                  className="rounded-xl border border-stadium-border bg-stadium-card/70 px-3.5 py-2.5 flex items-center justify-between gap-3"
+                  type="button"
+                  onClick={() => setInspectedPlayerId(member.playerId)}
+                  className="w-full text-left rounded-xl border border-stadium-border bg-stadium-card/70 hover:border-gold-500/45 px-3.5 py-2.5 flex items-center justify-between gap-3 transition-colors"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -1649,18 +1874,23 @@ export default function LiveAuctionPage() {
                       </Badge>
                     </div>
                     <p className="text-[11px] text-stadium-muted mt-0.5">
-                      {ROLE_LABEL[member.playingRole]} • {member.nationality}
+                      {ROLE_LABEL[member.playingRole]} • {member.nationality || 'Unknown'}
                     </p>
                   </div>
                   <span className="font-mono text-sm font-bold text-gold-300 shrink-0">
                     {formatLakhs(member.priceLakhs)}
                   </span>
-                </div>
+                </button>
               ))
             )}
           </div>
         )}
       </Modal>
+
+      <PlayerProfileModal
+        playerId={inspectedPlayerId}
+        onClose={() => setInspectedPlayerId(null)}
+      />
     </main>
   );
 }

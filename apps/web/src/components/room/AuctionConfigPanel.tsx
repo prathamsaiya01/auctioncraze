@@ -18,11 +18,13 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { FranchiseEmblem } from '@/components/ui/FranchiseEmblem';
+import { PlayerProfileModal } from '@/components/players/PlayerProfileModal';
 import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
   CircleAlert,
+  Eye,
   Gavel,
   Layers,
   Lock,
@@ -42,7 +44,7 @@ type ConfigTab = 'MODE' | 'BIDDING' | 'POOL' | 'RETENTION';
 interface EditableLot {
   playerId: string;
   fullName: string;
-  nationality: string;
+  nationality: string | null;
   isOverseas: boolean;
   playingRole: CricketRole;
   setCategory: string;
@@ -62,6 +64,7 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
   const [isStartingAuction, setIsStartingAuction] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [configSuccess, setConfigSuccess] = useState<string | null>(null);
+  const [inspectedPlayerId, setInspectedPlayerId] = useState<string | null>(null);
 
   const canEdit = isHost && !room.configFinalized && room.status === 'LOBBY';
 
@@ -152,9 +155,15 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
   }, [room]);
 
   const { data: catalogPlayers = [], isLoading: isLoadingCatalog } = useQuery({
-    queryKey: ['player-catalog'],
+    queryKey: ['player-catalog', catalogSearch, catalogRole, catalogOrigin],
     queryFn: async () => {
-      const res: any = await api.get('/players/catalog');
+      const params = new URLSearchParams();
+      params.set('limit', '150');
+      if (catalogSearch.trim()) params.set('search', catalogSearch.trim());
+      if (catalogRole !== 'ALL') params.set('role', catalogRole);
+      if (catalogOrigin === 'DOMESTIC') params.set('overseas', 'false');
+      if (catalogOrigin === 'OVERSEAS') params.set('overseas', 'true');
+      const res: any = await api.get(`/players/catalog?${params.toString()}`);
       return (res.data || []) as MasterPlayerCatalogDto[];
     }
   });
@@ -174,7 +183,7 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
       if (
         catalogSearch.trim() &&
         !p.fullName.toLowerCase().includes(catalogSearch.trim().toLowerCase()) &&
-        !p.nationality.toLowerCase().includes(catalogSearch.trim().toLowerCase())
+        !(p.nationality || '').toLowerCase().includes(catalogSearch.trim().toLowerCase())
       ) {
         return false;
       }
@@ -811,20 +820,37 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
                           className="rounded-lg bg-stadium-surface border border-stadium-border px-3 py-2 flex items-center justify-between gap-2 text-xs"
                         >
                           <div className="min-w-0">
-                            <div className="font-bold text-white truncate">{p.fullName}</div>
+                            <button
+                              type="button"
+                              onClick={() => setInspectedPlayerId(p.id)}
+                              className="font-bold text-white hover:text-gold-300 truncate text-left block max-w-full"
+                              title="Inspect full IPL career stats"
+                            >
+                              {p.fullName}
+                            </button>
                             <div className="text-[11px] text-stadium-muted font-mono">
                               {p.playingRole} · {p.isOverseas ? 'OVERSEAS' : 'DOMESTIC'} · {p.basePriceLakhs}L
                             </div>
                           </div>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={inPool || isRetained ? 'ghost' : 'surface'}
-                            disabled={inPool || isRetained}
-                            onClick={() => addLotFromCatalog(p)}
-                          >
-                            {isRetained ? 'Retained' : inPool ? 'In Pool' : 'Add'}
-                          </Button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setInspectedPlayerId(p.id)}
+                              className="p-1.5 rounded-lg text-stadium-muted hover:text-gold-300 hover:bg-white/5"
+                              title="View IPL Career Stats"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={inPool || isRetained ? 'ghost' : 'surface'}
+                              disabled={inPool || isRetained}
+                              onClick={() => addLotFromCatalog(p)}
+                            >
+                              {isRetained ? 'Retained' : inPool ? 'In Pool' : 'Add'}
+                            </Button>
+                          </div>
                         </div>
                       );
                     })
@@ -1161,6 +1187,11 @@ export function AuctionConfigPanel({ room, isHost, onRoomUpdated }: AuctionConfi
           ) : null}
         </div>
       </Card>
+
+      <PlayerProfileModal
+        playerId={inspectedPlayerId}
+        onClose={() => setInspectedPlayerId(null)}
+      />
     </div>
   );
 }

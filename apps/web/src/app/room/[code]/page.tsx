@@ -618,6 +618,11 @@ export default function RoomLobbyPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <Link href="/players">
+              <Button variant="ghost" size="sm">
+                IPL Archive
+              </Button>
+            </Link>
             {myParticipant && (
               <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-stadium-card border border-stadium-border text-[11px] font-mono">
                 {socketStatus === 'CONNECTED' ? (

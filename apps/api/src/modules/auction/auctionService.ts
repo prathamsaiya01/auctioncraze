@@ -218,6 +218,8 @@ export class AuctionService {
             bidDto: {
               id: existingIdempotentBid.id,
               lotId: existingIdempotentBid.lotId,
+              playerName: lot?.player?.fullName,
+              roundNumber: existingIdempotentBid.roundNumber ?? 1,
               franchiseId: fran.id,
               franchiseCode: fran.presetCode,
               franchiseColor: fran.primaryColor,
@@ -288,12 +290,14 @@ export class AuctionService {
       }
 
       const seq = (lot.bids[0]?.sequenceNumber || 0) + 1;
+      const lotRound = lot.roundNumber ?? 1;
       const createdBid = await tx.bid.create({
         data: {
           lotId: lot.id,
           franchiseId: franchise.id,
           participantId: participant.id,
           bidAmountLakhs: input.bidAmountLakhs,
+          roundNumber: lotRound,
           sequenceNumber: seq,
           idempotencyKey: input.idempotencyKey
         }
@@ -353,6 +357,8 @@ export class AuctionService {
         bidDto: {
           id: createdBid.id,
           lotId: createdBid.lotId,
+          playerName: lot.player.fullName,
+          roundNumber: lotRound,
           franchiseId: franchise.id,
           franchiseCode: franchise.presetCode,
           franchiseColor: franchise.primaryColor,
@@ -1094,6 +1100,180 @@ export class AuctionService {
       upNextLots: snapshot.upNextLots
     });
     emitToRoom(normalized, SOCKET_EVENTS.TIMER_UPDATED, snapshot.timer);
+
+    return snapshot;
+  }
+
+  /**
+   * Re-queues UNSOLD players into a controlled accelerated round after current active bidding closes.
+   * Guarantees zero duplicate sales by filtering out any lot with a Purchase record.
+   */
+  static async requeueUnsold(
+    code: string,
+    guestSessionId: string,
+    lotIds?: string[]
+  ): Promise<AuctionStateSnapshotDto> {
+    const normalized = code.trim().toUpperCase();
+    const nowMs = Date.now();
+
+    const txResult = await prisma.$transaction(async (tx) => {
+      const { id: roomId } = await lockRoomByCode(tx, normalized);
+      const room = await tx.room.findUniqueOrThrow({
+        where: { id: roomId },
+        include: {
+          participants: true,
+          lots: {
+            include: { player: true, purchase: true },
+            orderBy: { sequenceOrder: 'asc' }
+          }
+        }
+      });
+
+      assertActiveHost(room, guestSessionId);
+
+      if (room.status === DbRoomStatus.LOBBY || room.status === DbRoomStatus.CANCELLED) {
+        throw new AppError(
+          'Unsold re-entry is only available once the auction has started.',
+          409,
+          'AUCTION_NOT_STARTED'
+        );
+      }
+
+      const activeBlocking = room.currentLotId
+        ? room.lots.find(
+            (l) =>
+              l.id === room.currentLotId &&
+              (l.status === DbLotStatus.ACTIVE || l.status === DbLotStatus.BIDDING_CLOSED)
+          )
+        : null;
+      if (activeBlocking) {
+        throw new AppError(
+          'Finish the current active player lot (SOLD / UNSOLD / SKIP) before starting an Unsold Re-Entry round.',
+          409,
+          'RESOLVE_CURRENT_LOT_FIRST'
+        );
+      }
+
+      const targetIdSet = lotIds && lotIds.length > 0 ? new Set(lotIds) : null;
+      if (targetIdSet) {
+        for (const id of targetIdSet) {
+          const found = room.lots.find((l) => l.id === id);
+          if (!found) {
+            throw new AppError(`Lot '${id}' does not belong to this room.`, 404, 'LOT_NOT_FOUND');
+          }
+          if (found.purchase || found.status !== DbLotStatus.UNSOLD) {
+            throw new AppError(
+              `Player '${found.player.fullName}' is not eligible for unsold re-entry.`,
+              409,
+              'LOT_NOT_ELIGIBLE_REENTRY'
+            );
+          }
+        }
+      }
+
+      const eligible = room.lots.filter(
+        (l) =>
+          l.status === DbLotStatus.UNSOLD &&
+          !l.purchase &&
+          (!targetIdSet || targetIdSet.has(l.id))
+      );
+      if (eligible.length === 0) {
+        throw new AppError('No unsold players are available to re-enter.', 400, 'NO_UNSOLD_PLAYERS');
+      }
+
+      const maxSeq = room.lots.reduce((max, l) => Math.max(max, l.sequenceOrder), 0);
+      const nextRound = room.lots.reduce((max, l) => Math.max(max, l.roundNumber ?? 1), 1) + 1;
+
+      for (let i = 0; i < eligible.length; i++) {
+        await tx.roomPlayerLot.update({
+          where: { id: eligible[i].id },
+          data: {
+            roundNumber: nextRound,
+            sequenceOrder: maxSeq + i + 1,
+            status: DbLotStatus.QUEUED,
+            currentBidLakhs: 0,
+            winningFranchiseId: null,
+            biddingClosedAt: null,
+            startedAt: null,
+            settledAt: null
+          }
+        });
+      }
+
+      const shouldActivateFirst = room.status === DbRoomStatus.COMPLETED || room.currentLotId === null;
+      let activatedLotId: string | null = null;
+      let deadlineMs: number | null = null;
+      const nextVersion = room.version + 1;
+
+      if (shouldActivateFirst) {
+        const firstLot = eligible[0];
+        activatedLotId = firstLot.id;
+        deadlineMs = nowMs + room.countdownSeconds * 1000;
+        await tx.roomPlayerLot.update({
+          where: { id: firstLot.id },
+          data: { status: DbLotStatus.ACTIVE, startedAt: new Date(nowMs) }
+        });
+        await tx.room.update({
+          where: { id: room.id },
+          data: {
+            status: DbRoomStatus.LIVE,
+            isPaused: false,
+            currentLotId: firstLot.id,
+            timerDeadlineMs: BigInt(deadlineMs),
+            timerRemainingMs: null,
+            endedAt: null,
+            version: nextVersion
+          }
+        });
+      } else {
+        await tx.room.update({
+          where: { id: room.id },
+          data: { version: nextVersion }
+        });
+      }
+
+      await appendRoomEvent(tx, room.id, nextVersion, SOCKET_EVENTS.LOT_ROUND_REENTERED, {
+        roundNumber: nextRound,
+        requeuedCount: eligible.length,
+        playerNames: eligible.map((l) => l.player.fullName)
+      });
+
+      const full = await tx.room.findUniqueOrThrow({
+        where: { id: room.id },
+        include: AUCTION_ROOM_INCLUDE
+      });
+
+      return {
+        full,
+        requeuedCount: eligible.length,
+        roundNumber: nextRound,
+        activatedLotId,
+        deadlineMs
+      };
+    });
+
+    if (txResult.activatedLotId && txResult.deadlineMs !== null) {
+      await AuctionTimerManager.setRunningTimer(normalized, txResult.activatedLotId, txResult.deadlineMs);
+    }
+
+    const snapshot = mapAuctionStateSnapshot(txResult.full, nowMs);
+    emitToRoom(normalized, SOCKET_EVENTS.LOT_ROUND_REENTERED, {
+      roomCode: normalized,
+      requeuedCount: txResult.requeuedCount,
+      roundNumber: txResult.roundNumber,
+      upNextLots: snapshot.upNextLots,
+      activatedFirst: Boolean(txResult.activatedLotId),
+      snapshot
+    });
+
+    if (txResult.activatedLotId) {
+      emitToRoom(normalized, SOCKET_EVENTS.PLAYER_LOT_STARTED, {
+        roomCode: normalized,
+        currentLot: snapshot.currentLot,
+        upNextLots: snapshot.upNextLots
+      });
+      emitToRoom(normalized, SOCKET_EVENTS.TIMER_UPDATED, snapshot.timer);
+    }
 
     return snapshot;
   }

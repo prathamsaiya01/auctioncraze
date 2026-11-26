@@ -28,6 +28,7 @@ Thumbs.db
 
 # Uploads / ML Artifacts
 uploads/
+services/ml/data/raw/
 services/ml/artifacts/*.pkl
 services/ml/artifacts/*.joblib
 services/ml/artifacts/*.json
