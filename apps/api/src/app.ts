@@ -12,8 +12,14 @@ import playerRoutes from './modules/players/playerRoutes';
 import intelligenceRoutes from './modules/intelligence/intelligenceRoutes';
 import seasonRoutes from './modules/seasons/seasonRoutes';
 
-export function createApp(): express.Application {
+export interface CreateAppOptions {
+  trustProxyHops?: number;
+}
+
+export function createApp(options?: CreateAppOptions): express.Application {
   const app = express();
+  const trustProxyHops = options?.trustProxyHops ?? config.trustProxyHops;
+  app.set('trust proxy', trustProxyHops);
 
   app.use(helmet({ crossOriginResourcePolicy: false }));
   app.use(

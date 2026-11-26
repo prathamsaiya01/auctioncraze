@@ -6,7 +6,12 @@ import { prisma, RoomStatus as DbRoomStatus } from '@auctioncraze/database';
 import { chatSendSchema, placeBidSchema, SOCKET_EVENTS, SOCKET_ROOMS } from '@auctioncraze/shared';
 import { config } from '../config/env';
 import { verifyGuestToken } from '../middleware/auth';
-import { redis } from '../lib/redis';
+import {
+  attachRedisLifecycleLogging,
+  createRedisClientOptions,
+  redis,
+  safeQuitRedis
+} from '../lib/redis';
 import { mapRoomToDetailDto } from '../modules/rooms/roomMapper';
 import { ROOM_RELATIONS_INCLUDE } from '../modules/rooms/roomHelpers';
 import { AUCTION_ROOM_INCLUDE, mapAuctionStateSnapshot } from '../modules/auction/auctionMapper';
@@ -75,9 +80,18 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
     transports: ['websocket', 'polling']
   });
 
-  pubClient = new Redis(config.redisUrl);
+  pubClient = new Redis(
+    config.redisUrl,
+    createRedisClientOptions('SocketPub', { maxRetriesPerRequest: null, lazyConnect: false })
+  );
   subClient = pubClient.duplicate();
+  attachRedisLifecycleLogging(pubClient, 'SocketPub');
+  attachRedisLifecycleLogging(subClient, 'SocketSub');
+
   io.adapter(createAdapter(pubClient, subClient));
+  io.of('/').adapter.on('error', (err: any) => {
+    console.error(`[SocketAdapter] Redis adapter error: ${err?.message || 'Unknown error'}`);
+  });
 
   io.use(async (socket: AuthenticatedSocket, next) => {
     const token =
@@ -499,12 +513,8 @@ export async function closeSocketServer(): Promise<void> {
     await ioInstance.close();
     ioInstance = null;
   }
-  if (subClient) {
-    await subClient.quit();
-    subClient = null;
-  }
-  if (pubClient) {
-    await pubClient.quit();
-    pubClient = null;
-  }
+  await safeQuitRedis(subClient, 'SocketSub');
+  subClient = null;
+  await safeQuitRedis(pubClient, 'SocketPub');
+  pubClient = null;
 }

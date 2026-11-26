@@ -1,0 +1,10 @@
+[build]
+  base = "."
+  command = "npm run build --workspace=@auctioncraze/shared && npm run build --workspace=@auctioncraze/web"
+  publish = "apps/web/.next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

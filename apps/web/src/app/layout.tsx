@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Barlow_Condensed, Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
+import { resolveMetadataBase } from '../lib/siteMetadata';
 
 const barlowCondensed = Barlow_Condensed({
   subsets: ['latin'],
@@ -21,10 +22,27 @@ const jetbrainsMono = JetBrains_Mono({
   variable: '--font-mono'
 });
 
+const metadataBase = resolveMetadataBase();
+
 export const metadata: Metadata = {
+  ...(metadataBase ? { metadataBase } : {}),
   title: 'AuctionCraze | Live Multiplayer IPL Cricket Auction',
   description:
-    'Create a room, claim an IPL franchise, invite friends, and battle in a live server-authoritative multiplayer cricket auction.'
+    'Create a room, claim an IPL franchise, invite friends, and battle in a live server-authoritative multiplayer cricket auction.',
+  openGraph: {
+    title: 'AuctionCraze | Live Multiplayer IPL Cricket Auction',
+    description:
+      'Create a room, claim an IPL franchise, invite friends, and battle in a live server-authoritative multiplayer cricket auction.',
+    siteName: 'AuctionCraze',
+    type: 'website',
+    ...(metadataBase ? { url: '/' } : {})
+  },
+  twitter: {
+    card: 'summary',
+    title: 'AuctionCraze | Live Multiplayer IPL Cricket Auction',
+    description:
+      'Create a room, claim an IPL franchise, invite friends, and battle in a live server-authoritative multiplayer cricket auction.'
+  }
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

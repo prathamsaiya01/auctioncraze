@@ -8,10 +8,10 @@ import { AuctionTimerManager } from './modules/auction/timerManager';
 
 async function bootstrap() {
   await prisma.$connect();
-  console.log('✅ PostgreSQL connected (port 5433).');
+  console.log('✅ PostgreSQL connected.');
 
   await connectRedis();
-  console.log('✅ Redis connected (port 6380).');
+  console.log('✅ Redis connected.');
 
   const app = createApp();
   const server = http.createServer(app);
@@ -23,14 +23,23 @@ async function bootstrap() {
   console.log('✅ Server-authoritative Redis auction timer engine started.');
 
   server.listen(config.port, () => {
-    console.log(`🚀 AuctionCraze API listening on http://localhost:${config.port}`);
+    console.log(
+      `🚀 AuctionCraze API listening on port ${config.port} (${config.nodeEnv}, trustProxyHops=${config.trustProxyHops}).`
+    );
   });
 
+  let isShuttingDown = false;
   const shutdown = async () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
     AuctionTimerManager.stop();
     await closeSocketServer();
     await disconnectRedis();
     await prisma.$disconnect();
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
     process.exit(0);
   };
 
