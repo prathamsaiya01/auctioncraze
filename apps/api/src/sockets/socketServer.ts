@@ -182,28 +182,36 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
           const serverTimeIso = new Date().toISOString();
           const serverTimeMs = Date.now();
           if (fullRoom) {
-            const personalSnapshot = mapRoomToDetailDto(fullRoom, true);
             socket.emit(SOCKET_EVENTS.ROOM_JOINED, {
               roomCode: room.code,
               participantId: participant.id,
               version: fullRoom.version,
               serverTime: serverTimeIso
             });
-            socket.emit(SOCKET_EVENTS.ROOM_STATE, personalSnapshot);
 
-            if (fullRoom.status !== DbRoomStatus.LOBBY) {
+            if (fullRoom.status === DbRoomStatus.LOBBY) {
+              socket.emit(SOCKET_EVENTS.ROOM_STATE, mapRoomToDetailDto(fullRoom, true));
+              if (wasDisconnected) {
+                socket.to(SOCKET_ROOMS.room(room.code)).emit(SOCKET_EVENTS.ROOM_STATE, mapRoomToDetailDto(fullRoom, false));
+              }
+            } else {
               const auctionRoom = await prisma.room.findUnique({
                 where: { id: room.id },
                 include: AUCTION_ROOM_INCLUDE
               });
               if (auctionRoom) {
                 socket.emit(SOCKET_EVENTS.AUCTION_STATE, mapAuctionStateSnapshot(auctionRoom));
+                if (wasDisconnected) {
+                  socket.to(SOCKET_ROOMS.room(room.code)).emit(SOCKET_EVENTS.PARTICIPANT_JOINED, {
+                    roomCode: room.code,
+                    participant: {
+                      id: participant.id,
+                      displayName: participant.displayName,
+                      role: participant.role
+                    }
+                  });
+                }
               }
-            }
-
-            if (wasDisconnected) {
-              const roomWideSnapshot = mapRoomToDetailDto(fullRoom, false);
-              socket.to(SOCKET_ROOMS.room(room.code)).emit(SOCKET_EVENTS.ROOM_STATE, roomWideSnapshot);
             }
           }
 
@@ -271,10 +279,9 @@ export async function setupSocketServer(httpServer: HttpServer): Promise<Server>
             });
           }
 
-          const personalSnapshot = mapRoomToDetailDto(fullRoom, true);
-          socket.emit(SOCKET_EVENTS.ROOM_STATE, personalSnapshot);
-
-          if (fullRoom.status !== DbRoomStatus.LOBBY) {
+          if (fullRoom.status === DbRoomStatus.LOBBY) {
+            socket.emit(SOCKET_EVENTS.ROOM_STATE, mapRoomToDetailDto(fullRoom, true));
+          } else {
             const auctionRoom = await prisma.room.findUnique({
               where: { id: fullRoom.id },
               include: AUCTION_ROOM_INCLUDE
@@ -387,7 +394,14 @@ async function handleSocketDetached(
 
     const participant = await prisma.roomParticipant.findUnique({
       where: { id: participantId },
-      select: { id: true, isRemoved: true, leftAt: true, isConnected: true }
+      select: {
+        id: true,
+        displayName: true,
+        isRemoved: true,
+        leftAt: true,
+        isConnected: true,
+        room: { select: { status: true } }
+      }
     });
 
     if (!participant || participant.isRemoved || participant.leftAt || !participant.isConnected) {
@@ -399,9 +413,18 @@ async function handleSocketDetached(
       data: { isConnected: false }
     });
 
-    const snapshot = await fetchPublicRoomSnapshot(roomCode);
-    if (snapshot) {
-      emitToRoom(roomCode, SOCKET_EVENTS.ROOM_STATE, snapshot);
+    if (participant.room?.status === DbRoomStatus.LOBBY) {
+      const snapshot = await fetchPublicRoomSnapshot(roomCode);
+      if (snapshot) {
+        emitToRoom(roomCode, SOCKET_EVENTS.ROOM_STATE, snapshot);
+      }
+    } else {
+      emitToRoom(roomCode, SOCKET_EVENTS.PARTICIPANT_LEFT, {
+        roomCode,
+        participantId: participant.id,
+        displayName: participant.displayName,
+        reason: 'DISCONNECTED'
+      });
     }
   } catch (err) {
     console.error('[Socket] Disconnect presence cleanup error:', err);

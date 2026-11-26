@@ -20,7 +20,7 @@ import {
 } from '@auctioncraze/shared';
 import { api } from '@/lib/api';
 import { formatCricketStyle, formatLakhs } from '@/lib/formatPrice';
-import { playBidChime, playCountdownTick, playSoldGavel, playUnsoldTone } from '@/lib/audioEffects';
+import { playBidChime, playSoldGavel, playUnsoldTone } from '@/lib/audioEffects';
 import { getRoomSocket } from '@/lib/socket';
 import { useSessionStore } from '@/stores/sessionStore';
 import { Badge } from '@/components/ui/Badge';
@@ -32,6 +32,7 @@ import { PlayerProfileModal } from '@/components/players/PlayerProfileModal';
 import { SquadIntelligencePanel } from '@/components/room/SquadIntelligencePanel';
 import { TradeCentreModal } from '@/components/room/TradeCentreModal';
 import { FranchiseNicknameEditor } from '@/components/room/FranchiseNicknameEditor';
+import { CountdownRing } from '@/components/room/CountdownRing';
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -177,13 +178,11 @@ export default function LiveAuctionPage() {
   const [volume, setVolume] = useState(0.65);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Server-authoritative timer offset (`serverTimeMs - Date.now()`) & ticking seconds
+  // Server-authoritative timer offset (`serverTimeMs - Date.now()`)
   const clockOffsetRef = useRef<number>(0);
-  const lastTickSecRef = useRef<number | null>(null);
   const soundPrefsRef = useRef({ isMuted: false, volume: 0.65 });
   const myFranchiseIdRef = useRef<string | null>(null);
   const fetchSnapshotRef = useRef<() => Promise<void>>(async () => {});
-  const [liveRemainingSeconds, setLiveRemainingSeconds] = useState<number>(0);
 
   useEffect(() => {
     soundPrefsRef.current = { isMuted, volume };
@@ -254,47 +253,6 @@ export default function LiveAuctionPage() {
   useEffect(() => {
     fetchSnapshotRef.current = fetchAuctionSnapshot;
   }, [fetchAuctionSnapshot]);
-
-  // Smooth countdown interval driven strictly by server deadlineMs + clockOffset
-  useEffect(() => {
-    const compute = () => {
-      if (!auction) {
-        setLiveRemainingSeconds(0);
-        return;
-      }
-      if (auction.isPaused || auction.auctionStage === 'PAUSED' || auction.timer.isPaused) {
-        setLiveRemainingSeconds(auction.timer.remainingSeconds);
-        return;
-      }
-      if (
-        auction.auctionStage === 'BIDDING_CLOSED' ||
-        auction.auctionStage === 'PLAYER_SOLD' ||
-        auction.auctionStage === 'PLAYER_UNSOLD' ||
-        auction.auctionStage === 'COMPLETED'
-      ) {
-        setLiveRemainingSeconds(0);
-        return;
-      }
-      if (auction.timer.deadlineMs) {
-        const estimatedServerNow = Date.now() + clockOffsetRef.current;
-        const diffSec = Math.max(0, (auction.timer.deadlineMs - estimatedServerNow) / 1000);
-        setLiveRemainingSeconds(diffSec);
-        const ceilSec = Math.ceil(diffSec);
-        if (ceilSec >= 1 && ceilSec <= 3 && lastTickSecRef.current !== ceilSec) {
-          lastTickSecRef.current = ceilSec;
-          playCountdownTick(isMuted, volume);
-        } else if (ceilSec > 3 || ceilSec <= 0) {
-          lastTickSecRef.current = null;
-        }
-      } else {
-        setLiveRemainingSeconds(auction.timer.remainingSeconds);
-      }
-    };
-
-    compute();
-    const interval = setInterval(compute, 100);
-    return () => clearInterval(interval);
-  }, [auction, isMuted, volume]);
 
   // Real-time incremental Socket.IO listener setup (stable ref dependencies; zero churn on audio toggles)
   useEffect(() => {
@@ -800,7 +758,7 @@ export default function LiveAuctionPage() {
         setPendingTradesCount((res?.data?.pendingIncoming || []).length);
       })
       .catch(() => {});
-  }, [isActiveOwner, token, roomCode, auction?.version]);
+  }, [isActiveOwner, token, roomCode]);
 
   const isOwnInspectedFranchise = Boolean(
     isActiveOwner && inspectedFranchise && myFranchise && inspectedFranchise.id === myFranchise.id
@@ -959,15 +917,6 @@ export default function LiveAuctionPage() {
   }
 
   const currentLot = auction.currentLot;
-  const maxTimerSec = Math.max(1, auction.settings.countdownSeconds);
-  const progressRatio = Math.max(0, Math.min(1, liveRemainingSeconds / maxTimerSec));
-  const isUrgent =
-    liveRemainingSeconds > 0 &&
-    liveRemainingSeconds <= 5 &&
-    auction.auctionStage === 'LIVE' &&
-    !auction.isPaused;
-  const ringCircumference = 2 * Math.PI * 38;
-  const ringOffset = ringCircumference * (1 - progressRatio);
 
   return (
     <main className="min-h-screen bg-stadium-bg pb-12">
@@ -1345,13 +1294,7 @@ export default function LiveAuctionPage() {
             <section className="xl:col-span-6 space-y-5 order-1 xl:order-2">
               {currentLot ? (
                 <Card
-                  highlight={
-                    auction.auctionStage === 'PLAYER_SOLD'
-                      ? 'gold'
-                      : isUrgent
-                      ? 'electric'
-                      : 'gold'
-                  }
+                  highlight="gold"
                   className="relative overflow-hidden p-5 sm:p-7 space-y-6"
                 >
                   {/* Animated Sold/Unsold Verdict Overlay */}
@@ -1463,57 +1406,16 @@ export default function LiveAuctionPage() {
                     </div>
 
                     {/* Circular Server-Authoritative Timer */}
-                    <div className="flex items-center gap-3" data-testid="auction-timer">
-                      <div className={`relative w-20 h-20 flex items-center justify-center ${isUrgent && !prefersReducedMotion ? 'animate-pulse' : ''}`}>
-                        <svg className="w-20 h-20 -rotate-90" viewBox="0 0 88 88">
-                          <circle
-                            cx="44"
-                            cy="44"
-                            r="38"
-                            stroke="rgba(255,255,255,0.08)"
-                            strokeWidth="6"
-                            fill="transparent"
-                          />
-                          <circle
-                            cx="44"
-                            cy="44"
-                            r="38"
-                            stroke={
-                              auction.auctionStage === 'BIDDING_CLOSED'
-                                ? '#F59E0B'
-                                : isUrgent
-                                ? '#EF4444'
-                                : '#D4AF37'
-                            }
-                            strokeWidth="6"
-                            strokeLinecap="round"
-                            fill="transparent"
-                            strokeDasharray={ringCircumference}
-                            strokeDashoffset={ringOffset}
-                          />
-                        </svg>
-                        <div className="absolute inset-0 flex flex-col items-center justify-center">
-                          <span
-                            className={`font-mono text-xl font-bold leading-none ${
-                              auction.auctionStage === 'BIDDING_CLOSED'
-                                ? 'text-signal-warn text-xs'
-                                : isUrgent
-                                ? 'text-signal-unsold'
-                                : 'text-white'
-                            }`}
-                          >
-                            {auction.auctionStage === 'PAUSED'
-                              ? `${Math.ceil(liveRemainingSeconds)}s`
-                              : auction.auctionStage === 'BIDDING_CLOSED'
-                              ? 'CLOSED'
-                              : `${Math.ceil(liveRemainingSeconds)}s`}
-                          </span>
-                          <span className="text-[9px] uppercase tracking-wider text-stadium-muted mt-0.5">
-                            {auction.isPaused ? 'Paused' : 'Clock'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+                    <CountdownRing
+                      deadlineMs={auction.timer.deadlineMs}
+                      remainingSeconds={auction.timer.remainingSeconds}
+                      countdownSeconds={auction.settings.countdownSeconds}
+                      isPaused={auction.isPaused || auction.auctionStage === 'PAUSED' || auction.timer.isPaused}
+                      auctionStage={auction.auctionStage}
+                      clockOffsetRef={clockOffsetRef}
+                      soundPrefsRef={soundPrefsRef}
+                      prefersReducedMotion={prefersReducedMotion}
+                    />
                   </div>
 
                   {/* Player Spotlight Core */}

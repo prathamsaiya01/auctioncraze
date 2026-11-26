@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { redis } from '../lib/redis';
+import { AuthenticatedRequest } from './auth';
 
 interface RateLimitOptions {
   keyPrefix: string;
@@ -8,12 +9,15 @@ interface RateLimitOptions {
 }
 
 /**
- * Redis-backed fixed-window rate limiter keyed by client IP (or session id when authenticated).
+ * Redis-backed fixed-window rate limiter keyed by authenticated session ID when available,
+ * falling back to client IP for anonymous endpoints (avoids false positives behind shared NATs).
  */
 export function rateLimit(options: RateLimitOptions) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const clientKey = req.ip || req.socket.remoteAddress || 'unknown';
+      const authReq = req as AuthenticatedRequest;
+      const clientKey =
+        authReq.guestSession?.id || req.ip || req.socket.remoteAddress || 'unknown';
       const bucket = Math.floor(Date.now() / 1000 / options.windowSeconds);
       const redisKey = `rl:${options.keyPrefix}:${clientKey}:${bucket}`;
 

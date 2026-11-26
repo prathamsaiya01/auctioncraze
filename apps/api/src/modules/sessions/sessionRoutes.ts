@@ -7,7 +7,7 @@ const router = Router();
 
 router.post(
   '/guest',
-  rateLimit({ keyPrefix: 'guest_create', windowSeconds: 60, maxRequests: 20 }),
+  rateLimit({ keyPrefix: 'guest_create', windowSeconds: 60, maxRequests: 120 }),
   SessionController.createGuest
 );
 

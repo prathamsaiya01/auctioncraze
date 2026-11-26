@@ -18,6 +18,8 @@ export class AuctionTimerManager {
   private static intervalId: NodeJS.Timeout | null = null;
   private static isTicking = false;
   private static lastSyncPulseByRoom = new Map<string, number>();
+  private static lastDbSweepMs = 0;
+  private static redisReadyHandler: (() => void) | null = null;
 
   static async setRunningTimer(roomCode: string, lotId: string, deadlineMs: number): Promise<void> {
     const code = roomCode.toUpperCase();
@@ -102,6 +104,34 @@ export class AuctionTimerManager {
    * Uses a Redis SET NX lock to prevent duplicate closes across concurrent workers.
    */
   static async processExpiredTimers(nowMs = Date.now()): Promise<string[]> {
+    // Periodic PostgreSQL safety net every 3s: rehydrate missing Redis timers if Redis restarted
+    if (nowMs - AuctionTimerManager.lastDbSweepMs >= 3000) {
+      AuctionTimerManager.lastDbSweepMs = nowMs;
+      try {
+        const overdueOrActive = await prisma.room.findMany({
+          where: {
+            status: DbRoomStatus.LIVE,
+            isPaused: false,
+            currentLotId: { not: null },
+            timerDeadlineMs: { not: null }
+          },
+          select: { code: true, currentLotId: true, timerDeadlineMs: true }
+        });
+        for (const r of overdueOrActive) {
+          const existing = await redis.zscore(ACTIVE_TIMERS_ZSET, r.code);
+          if (existing === null && r.currentLotId && r.timerDeadlineMs !== null) {
+            await AuctionTimerManager.setRunningTimer(
+              r.code,
+              r.currentLotId,
+              Number(r.timerDeadlineMs)
+            );
+          }
+        }
+      } catch {
+        // DB temporarily unavailable — retry cleanly on next sweep without dropping running loop
+      }
+    }
+
     const expiredCodes = await redis.zrangebyscore(ACTIVE_TIMERS_ZSET, '-inf', String(nowMs));
     const closedCodes: string[] = [];
 
@@ -253,6 +283,15 @@ export class AuctionTimerManager {
       console.error('[TimerManager] Boot recovery failed:', err);
     });
 
+    if (!AuctionTimerManager.redisReadyHandler) {
+      AuctionTimerManager.redisReadyHandler = () => {
+        AuctionTimerManager.recoverActiveTimersOnBoot().catch((err) => {
+          console.error('[TimerManager] Redis reconnect timer recovery failed:', err);
+        });
+      };
+      redis.on('ready', AuctionTimerManager.redisReadyHandler);
+    }
+
     AuctionTimerManager.intervalId = setInterval(async () => {
       if (AuctionTimerManager.isTicking) return;
       AuctionTimerManager.isTicking = true;
@@ -270,6 +309,10 @@ export class AuctionTimerManager {
     if (AuctionTimerManager.intervalId) {
       clearInterval(AuctionTimerManager.intervalId);
       AuctionTimerManager.intervalId = null;
+    }
+    if (AuctionTimerManager.redisReadyHandler) {
+      redis.off('ready', AuctionTimerManager.redisReadyHandler);
+      AuctionTimerManager.redisReadyHandler = null;
     }
   }
 }
