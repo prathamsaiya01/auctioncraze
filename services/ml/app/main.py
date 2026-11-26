@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException
+from app.models.predictor import predict_performance
 from app.models.registry import ModelRegistry
+from app.pipelines.data_audit import compute_dataset_fingerprint, run_data_audit
 from app.pipelines.dataset_loader import (
     load_player_feature_vectors,
     load_provenance_manifest,
@@ -9,6 +11,8 @@ from app.schemas.contracts import (
     GuardrailPolicy,
     MLModelKey,
     MatchPredictionRequest,
+    PerformancePredictionRequest,
+    PerformancePredictionResponse,
     PlayerFeatureVector,
     PlayerRatingRequest,
     PlayingXIRequest,
@@ -18,10 +22,10 @@ from app.schemas.contracts import (
 
 app = FastAPI(
     title="AuctionCraze ML Intelligence Service",
-    version="0.1.0",
+    version="0.2.0",
     description=(
-        "Cricket performance ratings, post-auction squad strength, Playing XI + Impact Player "
-        "and match prediction service. Never provides auction bidding or buying advice."
+        "Cricket performance ratings, chronological performance baselines, team strength, Playing XI + Impact Player "
+        "and match prediction service. Strictly separated from auction bidding (no buying recommendations)."
     ),
 )
 
@@ -30,22 +34,46 @@ registry = ModelRegistry()
 
 def _require_trained(key: MLModelKey) -> None:
     meta = registry.get(key)
-    if not meta.is_trained:
+    if not meta.is_trained or not meta.is_validated:
         raise HTTPException(
             status_code=503,
             detail=(
-                f"Model '{key.value}' is not trained yet (version: {meta.version}). "
-                "Real historical IPL data training runs in Phase 10; synthetic scores are disabled."
+                f"Model '{key.value}' is unavailable or not yet trained/validated (version: {meta.version}). "
+                "Synthetic or unvalidated predictions are disabled."
             ),
         )
 
 
 @app.get("/health")
 def health():
+    trained_keys = [k.value for k, v in registry.list_models().items() if v.is_trained]
     return {
         "status": "healthy",
         "service": "auctioncraze-ml",
+        "allow_bidding_advice": GuardrailPolicy.ALLOW_BIDDING_ADVICE,
+        "trained_models": trained_keys,
         "models": {k.value: v.model_dump() for k, v in registry.list_models().items()},
+    }
+
+
+@app.get("/v1/models/health")
+def models_health():
+    models = registry.list_models()
+    return {
+        "status": "ok",
+        "dataset_fingerprint": compute_dataset_fingerprint(),
+        "allow_bidding_advice": GuardrailPolicy.ALLOW_BIDDING_ADVICE,
+        "trained_count": sum(1 for v in models.values() if v.is_trained and v.is_validated),
+        "untrained_count": sum(1 for v in models.values() if not (v.is_trained and v.is_validated)),
+        "models": {
+            k.value: {
+                "version": v.version,
+                "is_trained": v.is_trained,
+                "is_validated": v.is_validated,
+                "algorithm": v.algorithm,
+            }
+            for k, v in models.items()
+        },
     }
 
 
@@ -59,6 +87,52 @@ def list_models():
         },
         "models": [v.model_dump() for v in registry.list_models().values()],
     }
+
+
+@app.get("/v1/models/{model_key}/versions")
+def get_model_versions(model_key: MLModelKey):
+    versions = registry.list_versions(model_key)
+    meta = registry.get(model_key)
+    return {
+        "model_key": model_key.value,
+        "active_version": meta.version,
+        "is_trained": meta.is_trained,
+        "versions": versions,
+    }
+
+
+@app.get("/v1/models/{model_key}/evaluation")
+def get_model_evaluation(model_key: MLModelKey):
+    versions = registry.list_versions(model_key)
+    if not versions:
+        meta = registry.get(model_key)
+        raise HTTPException(
+            status_code=503,
+            detail=f"No evaluation metrics available: model '{model_key.value}' is untrained (version: {meta.version}).",
+        )
+    latest = versions[0]
+    return {
+        "model_key": model_key.value,
+        "version": latest["version"],
+        "selected_candidate": latest.get("selected_candidate"),
+        "algorithm": latest["algorithm"],
+        "dataset_fingerprint": latest.get("dataset_fingerprint"),
+        "train_split": latest.get("train_split"),
+        "validation_split": latest.get("validation_split"),
+        "test_split": latest.get("test_split"),
+        "sample_counts": latest.get("sample_counts"),
+        "validation_metrics": latest.get("validation_metrics"),
+        "holdout_metrics": latest.get("metrics"),
+        "baseline_comparisons": latest.get("baseline_comparisons"),
+        "top_features": latest.get("top_features"),
+        "limitations": latest.get("limitations"),
+        "is_validated": latest.get("is_validated"),
+    }
+
+
+@app.get("/v1/audit/data-quality")
+def get_data_quality_audit():
+    return run_data_audit(write_report=False)
 
 
 @app.get("/v1/datasets/provenance", response_model=DatasetProvenanceResponse)
@@ -83,6 +157,15 @@ def get_player_features(cricsheet_id: str, cutoff_season: int | None = None):
     if cricsheet_id not in features:
         raise HTTPException(status_code=404, detail=f"No historical IPL features found for '{cricsheet_id}'")
     return PlayerFeatureVector(**features[cricsheet_id])
+
+
+@app.post("/v1/predictions/performance", response_model=PerformancePredictionResponse)
+def predict_player_performance(req: PerformancePredictionRequest):
+    return predict_performance(
+        player_id=req.player_id,
+        target=req.target,
+        cutoff_season=req.cutoff_season,
+    )
 
 
 @app.post("/v1/ratings/player")

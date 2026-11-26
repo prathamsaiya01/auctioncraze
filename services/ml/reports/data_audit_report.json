@@ -1,0 +1,364 @@
+{
+  "auditedAtUtc": "2026-11-26T06:04:06.192655+00:00",
+  "datasetFingerprint": "c9af4153629ffb06",
+  "summary": {
+    "totalPlayers": 809,
+    "totalPlayerSeasons": 3354,
+    "distinctSeasons": 19,
+    "seasonRange": "2008-2026",
+    "totalRawMatchesProcessed": 1243,
+    "allPlayersHaveCricsheetId": true,
+    "integrityPassed": true
+  },
+  "identityAudit": {
+    "duplicateCricsheetIds": [],
+    "duplicateExternalKeys": [],
+    "duplicateCricinfoIdsCount": 0,
+    "duplicateCricinfoIds": [],
+    "duplicateNormalizedNamesCount": 1,
+    "duplicateNormalizedNames": [
+      {
+        "normalizedName": "harmeetsingh",
+        "entries": [
+          {
+            "cricsheetId": "2a72fd4f",
+            "fullName": "Harmeet Singh",
+            "nationality": "India"
+          },
+          {
+            "cricsheetId": "0bf15e52",
+            "fullName": "Harmeet Singh",
+            "nationality": "United States"
+          }
+        ]
+      }
+    ],
+    "unexpandedInitialNamesCount": 27,
+    "unexpandedInitialNamesSample": [
+      "MS Dhoni",
+      "KL Rahul",
+      "CH Gayle",
+      "JP Duminy",
+      "SR Tendulkar",
+      "DS Rathi",
+      "VVS Laxman",
+      "V Nigam",
+      "KP Appanna",
+      "KC Cariappa",
+      "MD Choudhary",
+      "M Siddharth",
+      "KM Asif",
+      "R Smaran",
+      "SU Parakh"
+    ]
+  },
+  "biographicalCompleteness": {
+    "totalPlayers": 809,
+    "missingCounts": {
+      "missingNationality": 54,
+      "missingDateOfBirth": 33,
+      "missingAge": 33,
+      "missingBattingStyle": 39,
+      "missingBowlingStyle": 69,
+      "missingSecondaryRole": 678,
+      "missingImageUrl": 440,
+      "missingCricinfoId": 0
+    },
+    "missingRatesPct": {
+      "missingNationality": 6.67,
+      "missingDateOfBirth": 4.08,
+      "missingAge": 4.08,
+      "missingBattingStyle": 4.82,
+      "missingBowlingStyle": 8.53,
+      "missingSecondaryRole": 83.81,
+      "missingImageUrl": 54.39,
+      "missingCricinfoId": 0.0
+    },
+    "provenanceSources": {
+      "cricsheet+wikidata+wikipedia": 778,
+      "cricsheet": 27,
+      "cricsheet+wikidata": 4
+    },
+    "roleDistribution": {
+      "BATSMAN": 216,
+      "WICKET_KEEPER": 81,
+      "ALL_ROUNDER": 207,
+      "BOWLER": 305
+    }
+  },
+  "statisticsIntegrity": {
+    "duplicatePlayerSeasons": [],
+    "orphanSeasonRows": 0,
+    "debutLastMismatches": [],
+    "consistencyViolations": [],
+    "multiTeamIntraSeasonRows": 0,
+    "preservedNullCounts": {
+      "nullRuns_didNotBat": 397,
+      "nullBattingAverage_zeroDismissals": 694,
+      "nullStrikeRate_zeroBallsFaced": 397,
+      "nullWickets_didNotBowl": 1154,
+      "nullBowlingAverage_zeroWickets": 1542,
+      "nullEconomy_zeroLegalBalls": 1154,
+      "nullBowlingStrikeRate_zeroWickets": 1542,
+      "nullBestBowling_didNotBowl": 1154
+    },
+    "smallSampleOutlierCount": 17,
+    "smallSampleOutliersSample": [
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "d0513f63",
+        "season": 2008,
+        "ballsBowled": 6,
+        "runsConceded": 24,
+        "economy": 24.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "8ba8195d",
+        "season": 2009,
+        "ballsBowled": 6,
+        "runsConceded": 25,
+        "economy": 25.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "64a4c383",
+        "season": 2011,
+        "ballsBowled": 6,
+        "runsConceded": 25,
+        "economy": 25.0
+      },
+      {
+        "kind": "TINY_SAMPLE_STRIKE_RATE",
+        "cricsheetId": "c64c2443",
+        "season": 2012,
+        "runs": 4,
+        "ballsFaced": 1,
+        "strikeRate": 400.0
+      },
+      {
+        "kind": "TINY_SAMPLE_STRIKE_RATE",
+        "cricsheetId": "b2570b38",
+        "season": 2013,
+        "runs": 4,
+        "ballsFaced": 1,
+        "strikeRate": 400.0
+      },
+      {
+        "kind": "TINY_SAMPLE_STRIKE_RATE",
+        "cricsheetId": "2af1b6d2",
+        "season": 2014,
+        "runs": 4,
+        "ballsFaced": 1,
+        "strikeRate": 400.0
+      },
+      {
+        "kind": "TINY_SAMPLE_STRIKE_RATE",
+        "cricsheetId": "663b5e34",
+        "season": 2022,
+        "runs": 4,
+        "ballsFaced": 1,
+        "strikeRate": 400.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "6c19c6e5",
+        "season": 2022,
+        "ballsBowled": 1,
+        "runsConceded": 6,
+        "economy": 36.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "1ac746c8",
+        "season": 2024,
+        "ballsBowled": 1,
+        "runsConceded": 4,
+        "economy": 24.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "765a4731",
+        "season": 2024,
+        "ballsBowled": 6,
+        "runsConceded": 27,
+        "economy": 27.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "a24be938",
+        "season": 2024,
+        "ballsBowled": 6,
+        "runsConceded": 28,
+        "economy": 28.0
+      },
+      {
+        "kind": "TINY_SAMPLE_STRIKE_RATE",
+        "cricsheetId": "107c26fb",
+        "season": 2025,
+        "runs": 8,
+        "ballsFaced": 2,
+        "strikeRate": 400.0
+      },
+      {
+        "kind": "TINY_SAMPLE_STRIKE_RATE",
+        "cricsheetId": "2f9d0389",
+        "season": 2025,
+        "runs": 4,
+        "ballsFaced": 1,
+        "strikeRate": 400.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "62175638",
+        "season": 2025,
+        "ballsBowled": 6,
+        "runsConceded": 30,
+        "economy": 30.0
+      },
+      {
+        "kind": "TINY_SAMPLE_ECONOMY",
+        "cricsheetId": "752f7486",
+        "season": 2025,
+        "ballsBowled": 1,
+        "runsConceded": 4,
+        "economy": 24.0
+      }
+    ]
+  },
+  "seasonCoverage": [
+    {
+      "season": 2008,
+      "matchesRecorded": 58,
+      "activePlayers": 163,
+      "totalRuns": 16809,
+      "totalWickets": 604
+    },
+    {
+      "season": 2009,
+      "matchesRecorded": 57,
+      "activePlayers": 165,
+      "totalRuns": 15344,
+      "totalWickets": 621
+    },
+    {
+      "season": 2010,
+      "matchesRecorded": 60,
+      "activePlayers": 181,
+      "totalRuns": 17735,
+      "totalWickets": 627
+    },
+    {
+      "season": 2011,
+      "matchesRecorded": 73,
+      "activePlayers": 199,
+      "totalRuns": 19928,
+      "totalWickets": 739
+    },
+    {
+      "season": 2012,
+      "matchesRecorded": 74,
+      "activePlayers": 190,
+      "totalRuns": 21323,
+      "totalWickets": 772
+    },
+    {
+      "season": 2013,
+      "matchesRecorded": 76,
+      "activePlayers": 198,
+      "totalRuns": 21427,
+      "totalWickets": 829
+    },
+    {
+      "season": 2014,
+      "matchesRecorded": 60,
+      "activePlayers": 152,
+      "totalRuns": 17922,
+      "totalWickets": 606
+    },
+    {
+      "season": 2015,
+      "matchesRecorded": 59,
+      "activePlayers": 145,
+      "totalRuns": 17409,
+      "totalWickets": 624
+    },
+    {
+      "season": 2016,
+      "matchesRecorded": 60,
+      "activePlayers": 159,
+      "totalRuns": 17962,
+      "totalWickets": 591
+    },
+    {
+      "season": 2017,
+      "matchesRecorded": 59,
+      "activePlayers": 161,
+      "totalRuns": 17907,
+      "totalWickets": 650
+    },
+    {
+      "season": 2018,
+      "matchesRecorded": 60,
+      "activePlayers": 149,
+      "totalRuns": 19098,
+      "totalWickets": 662
+    },
+    {
+      "season": 2019,
+      "matchesRecorded": 60,
+      "activePlayers": 162,
+      "totalRuns": 18573,
+      "totalWickets": 639
+    },
+    {
+      "season": 2020,
+      "matchesRecorded": 60,
+      "activePlayers": 151,
+      "totalRuns": 18508,
+      "totalWickets": 625
+    },
+    {
+      "season": 2021,
+      "matchesRecorded": 60,
+      "activePlayers": 168,
+      "totalRuns": 17716,
+      "totalWickets": 670
+    },
+    {
+      "season": 2022,
+      "matchesRecorded": 74,
+      "activePlayers": 190,
+      "totalRuns": 23052,
+      "totalWickets": 849
+    },
+    {
+      "season": 2023,
+      "matchesRecorded": 74,
+      "activePlayers": 209,
+      "totalRuns": 24428,
+      "totalWickets": 857
+    },
+    {
+      "season": 2024,
+      "matchesRecorded": 71,
+      "activePlayers": 208,
+      "totalRuns": 24657,
+      "totalWickets": 830
+    },
+    {
+      "season": 2025,
+      "matchesRecorded": 74,
+      "activePlayers": 202,
+      "totalRuns": 25286,
+      "totalWickets": 830
+    },
+    {
+      "season": 2026,
+      "matchesRecorded": 74,
+      "activePlayers": 202,
+      "totalRuns": 26151,
+      "totalWickets": 835
+    }
+  ]
+}

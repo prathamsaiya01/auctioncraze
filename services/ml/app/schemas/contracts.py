@@ -1,11 +1,13 @@
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
 class MLModelKey(str, Enum):
     PLAYER_RATING = "PLAYER_RATING"
     PERFORMANCE_PRED = "PERFORMANCE_PRED"
+    BATTING_PERFORMANCE_PRED = "BATTING_PERFORMANCE_PRED"
+    BOWLING_PERFORMANCE_PRED = "BOWLING_PERFORMANCE_PRED"
     TEAM_STRENGTH = "TEAM_STRENGTH"
     PLAYING_XI = "PLAYING_XI"
     MATCH_PRED = "MATCH_PRED"
@@ -24,9 +26,19 @@ class ModelVersionMetadata(BaseModel):
     version: str
     algorithm: str
     train_split: str
+    validation_split: Optional[str] = None
     test_split: str
+    target_name: Optional[str] = None
+    target_definition: Optional[str] = None
+    random_seed: Optional[int] = None
+    dataset_fingerprint: Optional[str] = None
+    trained_at_utc: Optional[str] = None
+    feature_names: List[str] = Field(default_factory=list)
+    sample_counts: Dict[str, int] = Field(default_factory=dict)
     metrics: Dict[str, float] = Field(default_factory=dict)
+    validation_metrics: Dict[str, float] = Field(default_factory=dict)
     is_trained: bool = False
+    is_validated: bool = False
     artifact_path: Optional[str] = None
 
 
@@ -146,3 +158,33 @@ class DatasetProvenanceResponse(BaseModel):
     with_verified_dob: int
     sources: List[Dict[str, object]]
     bidding_advice_enabled: bool = False
+
+
+class PerformancePredictionRequest(BaseModel):
+    player_id: str = Field(..., description="Cricsheet ID, externalKey, or player fullName")
+    target: Literal["runs_per_match", "wickets_per_match"] = "runs_per_match"
+    cutoff_season: int = Field(default=2027, ge=2009, le=2035)
+
+
+class PredictionInterval(BaseModel):
+    lower_bound: float
+    upper_bound: float
+    basis: str
+
+
+class PerformancePredictionResponse(BaseModel):
+    player_id: str
+    player_name: str
+    target: Literal["runs_per_match", "wickets_per_match"]
+    predicted_value: float
+    unit: str
+    model_key: MLModelKey
+    model_version: str
+    algorithm: str
+    dataset_fingerprint: str
+    cutoff_season: int
+    prior_seasons_used: int
+    prior_matches_used: int
+    prediction_interval: PredictionInterval
+    uncertainty_note: str
+    allow_bidding_advice: bool = False

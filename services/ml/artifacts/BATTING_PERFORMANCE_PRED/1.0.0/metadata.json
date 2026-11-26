@@ -1,0 +1,216 @@
+{
+  "model_key": "BATTING_PERFORMANCE_PRED",
+  "version": "1.0.0",
+  "selected_candidate": "Ridge(alpha=10.0)",
+  "algorithm": "Ridge Regression",
+  "target_name": "runs_per_match",
+  "target_definition": "Expected IPL runs scored per match played in target season (min 3 matches, min 3 prior matches, min 2 prior bat innings).",
+  "random_seed": 42,
+  "trained_at_utc": "2026-11-26T06:06:07.394266+00:00",
+  "dataset_fingerprint": "c9af4153629ffb06",
+  "train_split": "2009-2021 (refit 2009-2023 for final holdout)",
+  "validation_split": "2022-2023",
+  "test_split": "2024-2026",
+  "sample_counts": {
+    "total_eligible": 1890,
+    "train_2009_2021": 1295,
+    "validation_2022_2023": 232,
+    "train_plus_val_2009_2023": 1527,
+    "holdout_2024_2026": 363
+  },
+  "feature_names": [
+    "prior_seasons_count",
+    "prior_matches",
+    "prior_bat_innings",
+    "prior_batting_innings_rate",
+    "prior_runs_per_match",
+    "prior_batting_avg",
+    "prior_strike_rate",
+    "prior_50_plus_rate",
+    "recent_1y_runs_per_match",
+    "recent_2y_runs_per_match",
+    "recent_3y_runs_per_match",
+    "batting_consistency_std",
+    "batting_trend_delta",
+    "prior_catches_per_match",
+    "is_prior_wicketkeeper",
+    "seasons_since_last_played",
+    "age_at_season",
+    "is_overseas_num"
+  ],
+  "metrics": {
+    "mae": 5.2986,
+    "rmse": 7.4039,
+    "r2": 0.6834,
+    "residual_std": 7.3976,
+    "samples": 363
+  },
+  "validation_metrics": {
+    "mae": 5.5175,
+    "rmse": 7.7069,
+    "r2": 0.6336,
+    "residual_std": 7.6599,
+    "samples": 232
+  },
+  "baseline_comparisons": {
+    "global_mean_baseline": {
+      "validation_2022_2023": {
+        "mae": 10.6736,
+        "rmse": 12.7525,
+        "r2": -0.0032,
+        "residual_std": 12.76,
+        "samples": 232
+      },
+      "holdout_2024_2026": {
+        "mae": 11.1593,
+        "rmse": 13.2493,
+        "r2": -0.0139,
+        "residual_std": 13.1766,
+        "samples": 363
+      }
+    },
+    "historical_career_avg_baseline": {
+      "validation_2022_2023": {
+        "mae": 5.6194,
+        "rmse": 8.0049,
+        "r2": 0.6047,
+        "residual_std": 7.9069,
+        "samples": 232
+      },
+      "holdout_2024_2026": {
+        "mae": 5.2126,
+        "rmse": 7.6512,
+        "r2": 0.6619,
+        "residual_std": 7.5956,
+        "samples": 363
+      }
+    },
+    "recent_3y_avg_baseline": {
+      "validation_2022_2023": {
+        "mae": 5.6531,
+        "rmse": 7.9221,
+        "r2": 0.6129,
+        "residual_std": 7.8983,
+        "samples": 232
+      },
+      "holdout_2024_2026": {
+        "mae": 5.3474,
+        "rmse": 7.765,
+        "r2": 0.6518,
+        "residual_std": 7.7715,
+        "samples": 363
+      }
+    }
+  },
+  "candidate_comparisons_validation": [
+    {
+      "candidate": "Ridge(alpha=10.0)",
+      "algorithm": "Ridge Regression",
+      "validation_2022_2023": {
+        "mae": 5.5175,
+        "rmse": 7.7069,
+        "r2": 0.6336,
+        "residual_std": 7.6599,
+        "samples": 232
+      }
+    },
+    {
+      "candidate": "Ridge(alpha=50.0)",
+      "algorithm": "Ridge Regression",
+      "validation_2022_2023": {
+        "mae": 5.5076,
+        "rmse": 7.712,
+        "r2": 0.6331,
+        "residual_std": 7.662,
+        "samples": 232
+      }
+    },
+    {
+      "candidate": "Ridge(alpha=150.0)",
+      "algorithm": "Ridge Regression",
+      "validation_2022_2023": {
+        "mae": 5.5237,
+        "rmse": 7.7444,
+        "r2": 0.63,
+        "residual_std": 7.6943,
+        "samples": 232
+      }
+    },
+    {
+      "candidate": "RandomForest(depth=4,min_leaf=15)",
+      "algorithm": "Random Forest Regressor",
+      "validation_2022_2023": {
+        "mae": 5.5528,
+        "rmse": 7.7933,
+        "r2": 0.6254,
+        "residual_std": 7.7523,
+        "samples": 232
+      }
+    },
+    {
+      "candidate": "RandomForest(depth=6,min_leaf=10)",
+      "algorithm": "Random Forest Regressor",
+      "validation_2022_2023": {
+        "mae": 5.5431,
+        "rmse": 7.8339,
+        "r2": 0.6214,
+        "residual_std": 7.8043,
+        "samples": 232
+      }
+    },
+    {
+      "candidate": "HistGBR(depth=3,min_leaf=20)",
+      "algorithm": "Histogram Gradient Boosting",
+      "validation_2022_2023": {
+        "mae": 5.5614,
+        "rmse": 7.7853,
+        "r2": 0.6261,
+        "residual_std": 7.7638,
+        "samples": 232
+      }
+    }
+  ],
+  "top_features": [
+    {
+      "feature": "prior_batting_innings_rate",
+      "weight": 2.5012
+    },
+    {
+      "feature": "recent_3y_runs_per_match",
+      "weight": 2.3109
+    },
+    {
+      "feature": "recent_1y_runs_per_match",
+      "weight": 1.8885
+    },
+    {
+      "feature": "prior_runs_per_match",
+      "weight": 1.8804
+    },
+    {
+      "feature": "recent_2y_runs_per_match",
+      "weight": 1.5796
+    },
+    {
+      "feature": "prior_batting_avg",
+      "weight": -1.4534
+    },
+    {
+      "feature": "age_at_season",
+      "weight": -0.928
+    },
+    {
+      "feature": "prior_bat_innings",
+      "weight": 0.8204
+    }
+  ],
+  "beats_mean_baseline": true,
+  "is_trained": true,
+  "is_validated": true,
+  "limitations": [
+    "Player-season T20 IPL performance has inherent match-by-match and batting-order variance.",
+    "Match-level opposition, venue pitch, toss, and impact-sub role shifts are not yet included in Phase 6A season aggregates.",
+    "Players with fewer than 2 prior innings in the target discipline before cutoff are ineligible (returned as 422 rather than fabricated)."
+  ],
+  "artifact_path": "artifacts/BATTING_PERFORMANCE_PRED/1.0.0"
+}
