@@ -107,6 +107,7 @@ model Room {
   name                      String
   visibility                RoomVisibility @default(PUBLIC)
   inviteToken               String?
+  spectatorInviteToken      String?
   status                    RoomStatus     @default(LOBBY)
   auctionMode               AuctionMode    @default(MEGA)
   hostParticipantId         String?

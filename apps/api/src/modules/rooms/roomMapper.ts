@@ -139,7 +139,15 @@ export function evaluateRoomReadiness(room: any): AuctionReadinessDto {
   };
 }
 
-export function mapRoomToDetailDto(room: any, includeInviteToken = false): RoomDetailDto {
+export function mapRoomToDetailDto(
+  room: any,
+  includeInviteToken = false,
+  options?: {
+    includeOwnerInvite?: boolean;
+    inviteAccessRole?: 'OWNER_OR_SPECTATOR' | 'SPECTATOR_ONLY';
+  }
+): RoomDetailDto {
+  const includeOwnerInvite = options?.includeOwnerInvite ?? includeInviteToken;
   const activeParticipants = (room.participants || []).filter(
     (p: any) => !p.isRemoved && !p.leftAt
   );
@@ -162,7 +170,9 @@ export function mapRoomToDetailDto(room: any, includeInviteToken = false): RoomD
     code: room.code,
     name: room.name,
     visibility: room.visibility as RoomVisibility,
-    ...(includeInviteToken ? { inviteToken: room.inviteToken ?? null } : {}),
+    ...(includeOwnerInvite ? { inviteToken: room.inviteToken ?? null } : {}),
+    ...(includeInviteToken ? { spectatorInviteToken: room.spectatorInviteToken ?? null } : {}),
+    ...(options?.inviteAccessRole ? { inviteAccessRole: options.inviteAccessRole } : {}),
     status: room.status as RoomStatus,
     hostParticipantId: room.hostParticipantId,
     version: room.version,

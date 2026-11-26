@@ -32,6 +32,7 @@ router.post('/:code/kick', authenticateGuest, RoomController.kick);
 router.post('/:code/transfer-host', authenticateGuest, RoomController.transferHost);
 router.patch('/:code/settings', authenticateGuest, RoomController.updateSettings);
 router.patch('/:code/live-settings', authenticateGuest, RoomController.updateLiveSettings);
+router.post('/:code/invite/regenerate', authenticateGuest, RoomController.regenerateInvites);
 router.patch('/:code/franchise/nickname', authenticateGuest, RoomController.updateFranchiseNickname);
 
 // Phase 3: Auction Configuration, Player Pool, Retentions & Finalization

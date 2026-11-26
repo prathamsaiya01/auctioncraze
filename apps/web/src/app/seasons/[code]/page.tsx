@@ -14,6 +14,7 @@ import {
 import { api } from '@/lib/api';
 import { getRoomSocket } from '@/lib/socket';
 import { useSessionStore } from '@/stores/sessionStore';
+import { buildSeasonInviteUrl, copyTextSafely, shareInviteLink } from '@/lib/shareLinks';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -358,11 +359,39 @@ export default function SeasonLeaderboardPage() {
             <Button
               variant="surface"
               size="sm"
-              onClick={() => {
-                navigator.clipboard?.writeText(window.location.href).catch(() => {});
-                setCopiedCode(true);
-                setTimeout(() => setCopiedCode(false), 1800);
+              onClick={async () => {
+                const ok = await copyTextSafely(season.code);
+                if (ok) {
+                  setActionMsg(`Season code ${season.code} copied!`);
+                } else {
+                  setActionErr(`Copy failed — share season code manually: ${season.code}`);
+                }
               }}
+              data-testid="copy-season-code-btn"
+              leftIcon={<Copy className="w-3.5 h-3.5" />}
+            >
+              {season.code}
+            </Button>
+            <Button
+              variant="surface"
+              size="sm"
+              onClick={async () => {
+                setActionErr(null);
+                const inviteUrl = buildSeasonInviteUrl(season.code);
+                const res = await shareInviteLink({
+                  title: `${season.name} (${season.code}) | AuctionCraze Season`,
+                  text: `Join ${season.name} (${season.code}) on AuctionCraze to claim your franchise and view standings!`,
+                  url: inviteUrl
+                });
+                if (res.outcome === 'shared' || res.outcome === 'copied') {
+                  setCopiedCode(true);
+                  setTimeout(() => setCopiedCode(false), 1800);
+                  setActionMsg(res.message);
+                } else if (res.outcome === 'failed') {
+                  setActionErr(res.message);
+                }
+              }}
+              data-testid="share-season-link-btn"
               leftIcon={<Copy className="w-3.5 h-3.5" />}
             >
               {copiedCode ? 'Invite Link Copied' : 'Share Season Link'}

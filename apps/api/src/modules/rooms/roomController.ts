@@ -266,4 +266,18 @@ export class RoomController {
       next(err);
     }
   }
+
+  static async regenerateInvites(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { code } = roomCodeParamSchema.parse(req.params);
+      const room = await RoomService.regenerateInvites(code, req.guestSession!.id);
+      res.json({ success: true, data: room });
+    } catch (err) {
+      next(err);
+    }
+  }
 }

@@ -94,6 +94,7 @@ export class RoomService {
     const roomCode = await RoomService.allocateUniqueCode();
     const inviteToken =
       input.visibility === RoomVisibility.PRIVATE ? crypto.randomBytes(12).toString('hex') : null;
+    const spectatorInviteToken = crypto.randomBytes(12).toString('hex');
 
     const createdRoom = await prisma.$transaction(async (tx) => {
       if (input.displayNameOverride && input.displayNameOverride.trim() !== input.defaultDisplayName) {
@@ -138,6 +139,7 @@ export class RoomService {
           name: input.roomName,
           visibility: input.visibility as DbRoomVisibility,
           inviteToken,
+          spectatorInviteToken,
           status: DbRoomStatus.LOBBY,
           auctionMode: mode as DbAuctionMode,
           seasonId: linkedSeasonId,
@@ -310,18 +312,30 @@ export class RoomService {
         )
       : undefined;
 
+    const hasOwnerInvite = timingSafeInviteMatch(room.inviteToken, inviteToken);
+    const hasSpectatorInvite = timingSafeInviteMatch(room.spectatorInviteToken, inviteToken);
+
     if (room.visibility === DbRoomVisibility.PRIVATE) {
-      const hasValidInvite = timingSafeInviteMatch(room.inviteToken, inviteToken);
-      if (!activeMembership && !hasValidInvite) {
+      if (!activeMembership && !hasOwnerInvite && !hasSpectatorInvite) {
         throw new AppError(
-          'This is a private room. A valid invite link or invite token is required.',
+          inviteToken
+            ? 'Invalid or revoked private room invite token.'
+            : 'This is a private room. A valid invite link or invite token is required.',
           403,
-          'PRIVATE_ROOM_INVITE_REQUIRED'
+          inviteToken ? 'INVALID_INVITE_TOKEN' : 'PRIVATE_ROOM_INVITE_REQUIRED'
         );
       }
     }
 
-    return mapRoomToDetailDto(room, !!activeMembership);
+    const inviteAccessRole: 'OWNER_OR_SPECTATOR' | 'SPECTATOR_ONLY' =
+      activeMembership?.role === DbRoomRole.SPECTATOR || (hasSpectatorInvite && !hasOwnerInvite)
+        ? 'SPECTATOR_ONLY'
+        : 'OWNER_OR_SPECTATOR';
+
+    return mapRoomToDetailDto(room, !!activeMembership, {
+      includeOwnerInvite: !!activeMembership && activeMembership.role !== DbRoomRole.SPECTATOR,
+      inviteAccessRole
+    });
   }
 
   static async joinRoom(code: string, input: JoinRoomInput): Promise<RoomDetailDto> {
@@ -340,6 +354,9 @@ export class RoomService {
         );
       }
 
+      const matchesOwnerInvite = timingSafeInviteMatch(room.inviteToken, input.inviteToken);
+      const matchesSpectatorInvite = timingSafeInviteMatch(room.spectatorInviteToken, input.inviteToken);
+
       if (room.visibility === DbRoomVisibility.PRIVATE) {
         if (!input.inviteToken) {
           throw new AppError(
@@ -348,9 +365,17 @@ export class RoomService {
             'INVITE_TOKEN_REQUIRED'
           );
         }
-        if (!timingSafeInviteMatch(room.inviteToken, input.inviteToken)) {
-          throw new AppError('Invalid private room invite token.', 403, 'INVALID_INVITE_TOKEN');
+        if (!matchesOwnerInvite && !matchesSpectatorInvite) {
+          throw new AppError('Invalid or revoked private room invite token.', 403, 'INVALID_INVITE_TOKEN');
         }
+      }
+
+      if (matchesSpectatorInvite && !matchesOwnerInvite && input.joinAs === RoomRole.OWNER) {
+        throw new AppError(
+          'Spectator invite links cannot be used to claim a franchise owner slot.',
+          403,
+          'SPECTATOR_INVITE_ONLY'
+        );
       }
 
       const existingMembership = await tx.roomParticipant.findUnique({
@@ -561,7 +586,13 @@ export class RoomService {
       }
     }
 
-    return mapRoomToDetailDto(result.fullRoom, true);
+    return mapRoomToDetailDto(result.fullRoom, true, {
+      includeOwnerInvite: result.joinedParticipant.role !== RoomRole.SPECTATOR,
+      inviteAccessRole:
+        result.joinedParticipant.role === RoomRole.SPECTATOR
+          ? 'SPECTATOR_ONLY'
+          : 'OWNER_OR_SPECTATOR'
+    });
   }
 
   static async claimOrReleaseFranchise(
@@ -730,7 +761,14 @@ export class RoomService {
       emitToRoom(normalized, SOCKET_EVENTS.ROOM_STATE, mapRoomToDetailDto(result.fullRoom, false));
     }
 
-    return mapRoomToDetailDto(result.fullRoom, true);
+    const callerAfterClaim = result.fullRoom.participants.find(
+      (p: any) => p.guestSessionId === guestSessionId && !p.isRemoved && !p.leftAt
+    );
+    const isSpecAfterClaim = callerAfterClaim?.role === DbRoomRole.SPECTATOR;
+    return mapRoomToDetailDto(result.fullRoom, true, {
+      includeOwnerInvite: !isSpecAfterClaim,
+      inviteAccessRole: isSpecAfterClaim ? 'SPECTATOR_ONLY' : 'OWNER_OR_SPECTATOR'
+    });
   }
 
   static async setReady(code: string, guestSessionId: string, isReady: boolean): Promise<RoomDetailDto> {
@@ -1121,6 +1159,8 @@ export class RoomService {
         nextVisibility === DbRoomVisibility.PRIVATE
           ? room.inviteToken || crypto.randomBytes(12).toString('hex')
           : null;
+      const nextSpectatorToken =
+        room.spectatorInviteToken || crypto.randomBytes(12).toString('hex');
 
       const nextVersion = room.version + 1;
       await tx.room.update({
@@ -1128,6 +1168,7 @@ export class RoomService {
         data: {
           visibility: nextVisibility,
           inviteToken: nextInviteToken,
+          spectatorInviteToken: nextSpectatorToken,
           initialPurseLakhs: payload.settings.initialPurseLakhs,
           minSquadSize: payload.settings.minSquadSize,
           maxSquadSize: payload.settings.maxSquadSize,
@@ -1368,5 +1409,46 @@ export class RoomService {
     }
 
     return mapRoomToDetailDto(result.updatedRoom, true);
+  }
+
+  static async regenerateInvites(code: string, hostSessionId: string): Promise<RoomDetailDto> {
+    const normalized = code.trim().toUpperCase();
+
+    const updatedRoom = await prisma.$transaction(async (tx) => {
+      const { id: roomId } = await lockRoomByCode(tx, normalized);
+      const room = await fetchRoomWithRelations(tx, roomId);
+
+      const host = room.participants.find(
+        (p) => p.id === room.hostParticipantId && !p.isRemoved && !p.leftAt
+      );
+      if (!host || host.guestSessionId !== hostSessionId) {
+        throw new AppError('Only the room host can revoke or rotate invite links.', 403, 'HOST_ONLY');
+      }
+
+      const nextInviteToken =
+        room.visibility === DbRoomVisibility.PRIVATE
+          ? crypto.randomBytes(12).toString('hex')
+          : null;
+      const nextSpectatorToken = crypto.randomBytes(12).toString('hex');
+      const nextVersion = room.version + 1;
+
+      await tx.room.update({
+        where: { id: room.id },
+        data: {
+          inviteToken: nextInviteToken,
+          spectatorInviteToken: nextSpectatorToken,
+          version: nextVersion
+        }
+      });
+
+      await appendRoomEvent(tx, room.id, nextVersion, SOCKET_EVENTS.ROOM_SETTINGS_UPDATED, {
+        inviteRotated: true
+      });
+
+      return fetchRoomWithRelations(tx, room.id);
+    });
+
+    emitToRoom(normalized, SOCKET_EVENTS.ROOM_STATE, mapRoomToDetailDto(updatedRoom, false));
+    return mapRoomToDetailDto(updatedRoom, true);
   }
 }

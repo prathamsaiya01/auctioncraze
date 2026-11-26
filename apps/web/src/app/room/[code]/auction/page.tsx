@@ -47,13 +47,16 @@ import { FranchiseNicknameEditor } from '@/components/room/FranchiseNicknameEdit
 import { CountdownRing } from '@/components/room/CountdownRing';
 import { BroadcastCue, BroadcastCueBanner } from '@/components/room/BroadcastCueBanner';
 import { RoomChatPanel } from '@/components/room/RoomChatPanel';
+import { buildRoomInviteUrl, copyTextSafely, shareInviteLink } from '@/lib/shareLinks';
 import {
   ArrowLeft,
   ArrowLeftRight,
   Award,
   BarChart3,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   Crown,
   Eye,
   FastForward,
@@ -68,6 +71,7 @@ import {
   Plus,
   Radio,
   RotateCcw,
+  Share2,
   ShieldCheck,
   SkipForward,
   Sparkles,
@@ -194,6 +198,8 @@ export default function LiveAuctionPage() {
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [broadcastCue, setBroadcastCue] = useState<BroadcastCue | null>(null);
+  const [copiedAuctionCode, setCopiedAuctionCode] = useState(false);
+  const [copiedAuctionLink, setCopiedAuctionLink] = useState(false);
 
   // Server-authoritative timer offset (`serverTimeMs - Date.now()`)
   const clockOffsetRef = useRef<number>(0);
@@ -1059,9 +1065,55 @@ export default function LiveAuctionPage() {
                 <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-wide text-white truncate">
                   {auction.roomName}
                 </h1>
-                <span className="font-mono text-xs px-2 py-0.5 rounded-md bg-gold-500/15 text-gold-300 border border-gold-500/35">
-                  {auction.roomCode}
-                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ok = await copyTextSafely(auction.roomCode);
+                    if (ok) {
+                      setCopiedAuctionCode(true);
+                      setTimeout(() => setCopiedAuctionCode(false), 1800);
+                      pushFeed(`Room code ${auction.roomCode} copied.`, 'electric');
+                    }
+                  }}
+                  data-testid="auction-copy-code-btn"
+                  className="inline-flex items-center gap-1 font-mono text-xs px-2 py-0.5 rounded-md bg-gold-500/15 text-gold-300 border border-gold-500/35 hover:border-gold-400"
+                  title="Copy room code"
+                >
+                  {copiedAuctionCode ? <Check className="w-3 h-3 text-signal-sold" /> : <Copy className="w-3 h-3" />}
+                  {copiedAuctionCode ? 'Copied' : auction.roomCode}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const isSpec = myParticipant?.role === RoomRole.SPECTATOR;
+                    const url = buildRoomInviteUrl({
+                      roomCode: auction.roomCode,
+                      visibility: auction.visibility,
+                      inviteToken: auction.inviteToken,
+                      spectatorInviteToken: auction.spectatorInviteToken,
+                      roleLock: isSpec ? 'spectator' : 'owner_or_spectator',
+                      seasonCode: auction.seasonCode
+                    });
+                    const res = await shareInviteLink({
+                      title: `${auction.roomName} (${auction.roomCode}) | Live Auction`,
+                      text: `Join live IPL auction ${auction.roomName} (${auction.roomCode}) on AuctionCraze!`,
+                      url
+                    });
+                    if (res.outcome === 'shared' || res.outcome === 'copied') {
+                      setCopiedAuctionLink(true);
+                      setTimeout(() => setCopiedAuctionLink(false), 2000);
+                      pushFeed(res.message, 'electric');
+                    } else if (res.outcome === 'failed') {
+                      setActionError(res.message);
+                    }
+                  }}
+                  data-testid="auction-share-invite-btn"
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-stadium-surface text-stadium-text border border-stadium-border hover:border-electric-400"
+                  title="Share or copy room invite link"
+                >
+                  {copiedAuctionLink ? <Check className="w-3 h-3 text-signal-sold" /> : <Share2 className="w-3 h-3 text-electric-400" />}
+                  {copiedAuctionLink ? 'Link Copied' : 'Invite'}
+                </button>
                 <Badge tone={formatRoleBadgeTone(auction.auctionStage)} data-testid="auction-stage-badge">
                   <Radio className="w-3 h-3" />
                   {auction.auctionStage.replace(/_/g, ' ')}

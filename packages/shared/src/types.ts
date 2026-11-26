@@ -143,6 +143,8 @@ export interface RoomDetailDto {
   name: string;
   visibility: RoomVisibility;
   inviteToken?: string | null;
+  spectatorInviteToken?: string | null;
+  inviteAccessRole?: 'OWNER_OR_SPECTATOR' | 'SPECTATOR_ONLY';
   status: RoomStatus;
   hostParticipantId: string | null;
   version: number;
@@ -298,6 +300,9 @@ export interface AuctionStateSnapshotDto {
   roomId: string;
   roomCode: string;
   roomName: string;
+  visibility?: RoomVisibility;
+  inviteToken?: string | null;
+  spectatorInviteToken?: string | null;
   roomStatus: RoomStatus;
   auctionStage: AuctionStage;
   currentRound: number;

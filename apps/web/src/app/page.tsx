@@ -14,6 +14,7 @@ import {
 } from '@auctioncraze/shared';
 import { api } from '@/lib/api';
 import { useSessionStore } from '@/stores/sessionStore';
+import { parseInviteOrRoomTarget } from '@/lib/shareLinks';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -127,9 +128,9 @@ export default function AuctionCrazeHomePage() {
 
   const handleJoinByCode = (e: React.FormEvent) => {
     e.preventDefault();
-    const cleaned = joinCode.trim().toUpperCase();
-    if (!cleaned) return;
-    router.push(`/room/${cleaned}`);
+    const target = parseInviteOrRoomTarget(joinCode);
+    if (!target) return;
+    router.push(target);
   };
 
   return (

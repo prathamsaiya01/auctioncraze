@@ -53,7 +53,13 @@ export class AuctionService {
       throw new AppError('You are not an active member of this room.', 403, 'NOT_A_MEMBER');
     }
 
-    return mapAuctionStateSnapshot(room);
+    const snapshot = mapAuctionStateSnapshot(room);
+    return {
+      ...snapshot,
+      visibility: room.visibility as any,
+      ...(member.role !== DbRoomRole.SPECTATOR ? { inviteToken: room.inviteToken ?? null } : {}),
+      spectatorInviteToken: room.spectatorInviteToken ?? null
+    };
   }
 
   static async startAuction(code: string, guestSessionId: string): Promise<AuctionStateSnapshotDto> {

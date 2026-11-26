@@ -22,6 +22,7 @@ import { Modal } from '@/components/ui/Modal';
 import { AuctionConfigPanel } from '@/components/room/AuctionConfigPanel';
 import { FranchiseNicknameEditor } from '@/components/room/FranchiseNicknameEditor';
 import { RoomChatPanel } from '@/components/room/RoomChatPanel';
+import { buildRoomInviteUrl, copyTextSafely, shareInviteLink } from '@/lib/shareLinks';
 import {
   ArrowLeft,
   Check,
@@ -36,6 +37,7 @@ import {
   LogOut,
   Play,
   Radio,
+  RefreshCw,
   Settings2,
   Share2,
   ShieldAlert,
@@ -62,6 +64,8 @@ export default function RoomLobbyPage() {
   const searchParams = useSearchParams();
   const roomCode = String(params?.code || '').toUpperCase();
   const inviteFromUrl = searchParams.get('invite') || '';
+  const roleHint = (searchParams.get('role') || '').toLowerCase();
+  const seasonFromUrl = searchParams.get('season') || '';
 
   const { session, token, isHydrated, hydrate, ensureSession } = useSessionStore();
 
@@ -69,11 +73,14 @@ export default function RoomLobbyPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [requiresInviteToken, setRequiresInviteToken] = useState(false);
+  const [inviteTokenError, setInviteTokenError] = useState<string | null>(null);
   const [inviteTokenInput, setInviteTokenInput] = useState(inviteFromUrl);
 
   // Join panel state (for visitors)
   const [joinDisplayName, setJoinDisplayName] = useState('');
-  const [joinAs, setJoinAs] = useState<RoomRole.OWNER | RoomRole.SPECTATOR>(RoomRole.OWNER);
+  const [joinAs, setJoinAs] = useState<RoomRole.OWNER | RoomRole.SPECTATOR>(
+    roleHint === 'spectator' ? RoomRole.SPECTATOR : RoomRole.OWNER
+  );
   const [selectedFranchiseCode, setSelectedFranchiseCode] = useState<string>('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [isActing, setIsActing] = useState(false);
@@ -84,6 +91,8 @@ export default function RoomLobbyPage() {
   const [kickedMessage, setKickedMessage] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedSpecLink, setCopiedSpecLink] = useState(false);
+  const [inviteFeedback, setInviteFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Host modals
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -130,20 +139,30 @@ export default function RoomLobbyPage() {
       if (!roomCode) return;
       setIsLoading(true);
       setLoadError(null);
+      const activeInvite = (inviteOverride ?? inviteTokenInput) || inviteFromUrl;
       try {
-        const activeInvite = (inviteOverride ?? inviteTokenInput) || inviteFromUrl;
         const query = activeInvite ? `?invite=${encodeURIComponent(activeInvite)}` : '';
         const res: any = await api.get(`/rooms/${roomCode}${query}`);
         const data = res.data as RoomDetailDto;
         setRoom(data);
         setRequiresInviteToken(false);
+        setInviteTokenError(null);
 
-        const firstOpen = data.franchises.find((f) => !f.claimedByParticipantId);
-        setSelectedFranchiseCode((prev) => prev || firstOpen?.presetCode || '');
+        const openSlots = data.franchises.filter((f) => !f.claimedByParticipantId);
+        setSelectedFranchiseCode((prev) => prev || openSlots[0]?.presetCode || '');
+        if (
+          data.inviteAccessRole === 'SPECTATOR_ONLY' ||
+          roleHint === 'spectator' ||
+          openSlots.length === 0 ||
+          (data.status !== RoomStatus.LOBBY && !data.settings.allowLateJoin)
+        ) {
+          setJoinAs(RoomRole.SPECTATOR);
+        }
       } catch (err: any) {
         const msg = err.message || 'Unable to load room';
         if (msg.toLowerCase().includes('private room') || msg.toLowerCase().includes('invite')) {
           setRequiresInviteToken(true);
+          setInviteTokenError(activeInvite ? msg : null);
         } else {
           setLoadError(msg);
         }
@@ -151,7 +170,7 @@ export default function RoomLobbyPage() {
         setIsLoading(false);
       }
     },
-    [roomCode, inviteFromUrl, inviteTokenInput]
+    [roomCode, inviteFromUrl, inviteTokenInput, roleHint]
   );
 
   useEffect(() => {
@@ -514,26 +533,90 @@ export default function RoomLobbyPage() {
   };
 
   const shareableUrl = useMemo(() => {
-    if (typeof window === 'undefined' || !room) return '';
-    const base = `${window.location.origin}/room/${room.code}`;
-    if (room.visibility === RoomVisibility.PRIVATE && room.inviteToken) {
-      return `${base}?invite=${room.inviteToken}`;
-    }
-    return base;
+    if (!room) return '';
+    return buildRoomInviteUrl({
+      roomCode: room.code,
+      visibility: room.visibility,
+      inviteToken: room.inviteToken,
+      spectatorInviteToken: room.spectatorInviteToken,
+      roleLock: 'owner_or_spectator',
+      seasonCode: room.seasonCode
+    });
   }, [room]);
 
+  const spectatorShareUrl = useMemo(() => {
+    if (!room) return '';
+    return buildRoomInviteUrl({
+      roomCode: room.code,
+      visibility: room.visibility,
+      spectatorInviteToken: room.spectatorInviteToken,
+      roleLock: 'spectator',
+      seasonCode: room.seasonCode
+    });
+  }, [room]);
+
+  const showInviteStatus = (ok: boolean, text: string) => {
+    setInviteFeedback({ ok, text });
+    setTimeout(() => setInviteFeedback(null), 2600);
+  };
+
   const handleCopyCode = async () => {
-    if (!room || typeof window === 'undefined') return;
-    await navigator.clipboard.writeText(room.code);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 1800);
+    if (!room) return;
+    const ok = await copyTextSafely(room.code);
+    if (ok) {
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 1800);
+      showInviteStatus(true, `Room code ${room.code} copied!`);
+    } else {
+      showInviteStatus(false, `Copy failed — share code manually: ${room.code}`);
+    }
   };
 
   const handleCopyInviteLink = async () => {
-    if (!shareableUrl || typeof window === 'undefined') return;
-    await navigator.clipboard.writeText(shareableUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    if (!room || !shareableUrl) return;
+    const res = await shareInviteLink({
+      title: `${room.name} (${room.code}) | AuctionCraze`,
+      text: `Join my cricket auction room ${room.name} (${room.code}) on AuctionCraze!`,
+      url: shareableUrl
+    });
+    if (res.outcome === 'shared' || res.outcome === 'copied') {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+      showInviteStatus(true, res.message);
+    } else if (res.outcome === 'failed') {
+      showInviteStatus(false, res.message);
+    }
+  };
+
+  const handleCopySpectatorLink = async () => {
+    if (!room || !spectatorShareUrl) return;
+    const res = await shareInviteLink({
+      title: `Spectate ${room.name} (${room.code}) | AuctionCraze`,
+      text: `Watch ${room.name} live as a Spectator on AuctionCraze!`,
+      url: spectatorShareUrl
+    });
+    if (res.outcome === 'shared' || res.outcome === 'copied') {
+      setCopiedSpecLink(true);
+      setTimeout(() => setCopiedSpecLink(false), 2000);
+      showInviteStatus(true, 'Spectator-only invite link copied!');
+    } else if (res.outcome === 'failed') {
+      showInviteStatus(false, res.message);
+    }
+  };
+
+  const handleRotateInvites = async () => {
+    if (!room) return;
+    setActionError(null);
+    setIsActing(true);
+    try {
+      const res: any = await api.post(`/rooms/${room.code}/invite/regenerate`, {});
+      setRoom(res.data as RoomDetailDto);
+      showInviteStatus(true, 'Previous invite links revoked — fresh links generated.');
+    } catch (err: any) {
+      showInviteStatus(false, err?.message || 'Unable to rotate invite links.');
+    } finally {
+      setIsActing(false);
+    }
   };
 
   if (isLoading) {
@@ -577,13 +660,22 @@ export default function RoomLobbyPage() {
               placeholder="Paste invite token from host"
               value={inviteTokenInput}
               onChange={(e) => setInviteTokenInput(e.target.value)}
+              data-testid="private-invite-input"
               required
             />
+            {inviteTokenError && (
+              <p
+                data-testid="private-invite-error"
+                className="text-xs text-signal-unsold bg-signal-unsold/10 border border-signal-unsold/35 rounded-xl px-3 py-2"
+              >
+                {inviteTokenError}
+              </p>
+            )}
             <div className="flex items-center justify-between gap-3">
               <Link href="/" className="text-xs text-stadium-muted hover:text-white">
                 ← Back to Hub
               </Link>
-              <Button type="submit" variant="gold">
+              <Button type="submit" variant="gold" data-testid="private-invite-submit-btn">
                 Unlock Room
               </Button>
             </div>
@@ -721,19 +813,46 @@ export default function RoomLobbyPage() {
               variant="surface"
               size="sm"
               onClick={handleCopyCode}
+              data-testid="copy-room-code-btn"
               leftIcon={copiedCode ? <Check className="w-3.5 h-3.5 text-signal-sold" /> : <Copy className="w-3.5 h-3.5" />}
             >
               {copiedCode ? 'Copied' : room.code}
             </Button>
 
-            {myParticipant && (
+            {myParticipant && (myParticipant.role !== RoomRole.SPECTATOR || room.visibility === RoomVisibility.PUBLIC) && (
               <Button
                 variant="electric"
                 size="sm"
                 onClick={handleCopyInviteLink}
+                data-testid="share-room-invite-btn"
                 leftIcon={copiedLink ? <Check className="w-3.5 h-3.5" /> : <Share2 className="w-3.5 h-3.5" />}
               >
                 {copiedLink ? 'Link Copied' : 'Share Invite'}
+              </Button>
+            )}
+
+            {myParticipant && (
+              <Button
+                variant="surface"
+                size="sm"
+                onClick={handleCopySpectatorLink}
+                data-testid="share-spectator-invite-btn"
+                leftIcon={copiedSpecLink ? <Check className="w-3.5 h-3.5 text-signal-sold" /> : <Eye className="w-3.5 h-3.5" />}
+              >
+                {copiedSpecLink ? 'Spec Link Copied' : 'Spectator Link'}
+              </Button>
+            )}
+
+            {isHost && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRotateInvites}
+                data-testid="host-rotate-invite-btn"
+                title="Revoke old invite links and generate fresh tokens"
+                leftIcon={<RefreshCw className="w-3.5 h-3.5" />}
+              >
+                Revoke Links
               </Button>
             )}
 
@@ -867,6 +986,19 @@ export default function RoomLobbyPage() {
           )}
         </Card>
 
+        {inviteFeedback && (
+          <div
+            data-testid="invite-feedback-banner"
+            className={`rounded-xl border px-4 py-2.5 text-xs font-medium ${
+              inviteFeedback.ok
+                ? 'border-signal-sold/45 bg-signal-sold/10 text-signal-sold'
+                : 'border-signal-warn/45 bg-signal-warn/10 text-signal-warn'
+            }`}
+          >
+            {inviteFeedback.text}
+          </div>
+        )}
+
         {actionError && (
           <div className="rounded-xl border border-signal-unsold/45 bg-signal-unsold/10 px-4 py-3 text-xs text-signal-unsold font-medium">
             {actionError}
@@ -876,11 +1008,34 @@ export default function RoomLobbyPage() {
         {/* Visitor Join Panel (shown only if caller has not joined yet) */}
         {!myParticipant && (
           <Card highlight="electric" className="p-6 space-y-5">
+            {(room.seasonCode || seasonFromUrl) && (
+              <div
+                data-testid="join-season-context-banner"
+                className="rounded-xl border border-electric-400/40 bg-electric-500/10 px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+              >
+                <span className="text-stadium-text">
+                  Part of Season{' '}
+                  <strong className="text-electric-300 font-mono">
+                    {room.seasonName || room.seasonCode || seasonFromUrl}
+                  </strong>
+                  {' '}• Joining requires no login and keeps your season franchise identity.
+                </span>
+                <Link
+                  href={`/seasons/${encodeURIComponent(room.seasonCode || seasonFromUrl)}`}
+                  className="text-gold-300 hover:text-gold-200 font-semibold underline"
+                >
+                  View Season Leaderboard
+                </Link>
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stadium-border pb-3">
               <div>
                 <h2 className="font-display text-2xl font-bold text-white">JOIN THIS ROOM</h2>
                 <p className="text-xs text-stadium-muted">
-                  {room.status === RoomStatus.LOBBY
+                  {room.inviteAccessRole === 'SPECTATOR_ONLY'
+                    ? 'Opened via Spectator Invite Link — franchise slots cannot be claimed with this link.'
+                    : room.status === RoomStatus.LOBBY
                     ? 'Pick an available IPL franchise below to compete, or join as a Spectator.'
                     : room.settings.allowLateJoin
                     ? 'Auction is live — claim an unclaimed franchise via late join, or join as a Spectator.'
@@ -891,7 +1046,11 @@ export default function RoomLobbyPage() {
                 <Button
                   type="button"
                   size="sm"
-                  disabled={room.status !== RoomStatus.LOBBY && !room.settings.allowLateJoin}
+                  data-testid="join-as-owner-btn"
+                  disabled={
+                    room.inviteAccessRole === 'SPECTATOR_ONLY' ||
+                    (room.status !== RoomStatus.LOBBY && !room.settings.allowLateJoin)
+                  }
                   variant={joinAs === RoomRole.OWNER ? 'gold' : 'surface'}
                   onClick={() => setJoinAs(RoomRole.OWNER)}
                 >
@@ -900,6 +1059,7 @@ export default function RoomLobbyPage() {
                 <Button
                   type="button"
                   size="sm"
+                  data-testid="join-as-spectator-btn"
                   variant={joinAs === RoomRole.SPECTATOR ? 'electric' : 'surface'}
                   onClick={() => setJoinAs(RoomRole.SPECTATOR)}
                 >
